@@ -14,6 +14,11 @@ import { collectAllTools, handleToolCall } from "./mcp/registry.js";
 // Import tool registrations (side-effect: registers tools in registry)
 import "./mcp/auth-tools.js";
 import "./mcp/query-tools.js";
+import "./mcp/draft-tools.js";
+import "./mcp/send-tools.js";
+import "./mcp/correction-tools.js";
+import "./mcp/batch-tools.js";
+import "./mcp/token-tools.js";
 
 // ─── Server ─────────────────────────────────────────────────────────────────────
 
