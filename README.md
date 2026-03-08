@@ -219,6 +219,48 @@ Lub w `.mcp.json` w katalogu projektu (scope: project):
 
 ---
 
+## Uzycie z claude.ai (Remote Connector)
+
+ksef-mcp mozna podlaczyc jako remote MCP connector w claude.ai:
+
+1. Wejdz na [claude.ai](https://claude.ai) → Settings → Connectors → **Add custom connector**
+2. Wpisz:
+   - **Name:** `KSeF`
+   - **Remote MCP server URL:** `https://bartoszgaca.pl/ksef/mcp`
+3. Kliknij **Add**
+
+Serwer odpowiada na Streamable HTTP transport (POST/GET/DELETE na `/mcp`).
+
+> **Uwaga:** Tokeny KSeF sa przechowywane server-side — claude.ai nie ma dostepu do sekretow.
+
+### Self-hosting HTTP transport
+
+Mozesz postawic wlasna instancje:
+
+```bash
+git clone https://github.com/gacabartosz/ksef-mcp.git
+cd ksef-mcp && npm install && npm run build
+
+# Uruchom HTTP server
+MCP_PORT=3400 KSEF_ENV=test node dist/http.js
+```
+
+Nginx reverse proxy:
+
+```nginx
+location /ksef/ {
+    proxy_pass http://127.0.0.1:3400/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 300s;
+}
+```
+
+---
+
 ## Przeplyw wysylki faktury
 
 Pelny przeplyw od szkicu do wysylki:
