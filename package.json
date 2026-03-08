@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json && node -e \"const f='dist/index.js',c=require('fs');let s=c.readFileSync(f,'utf8');if(!s.startsWith('#!'))c.writeFileSync(f,'#!/usr/bin/env node\\n'+s)\"",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
+    "start:http": "node dist/http.js",
     "test": "node --test tests/unit/*.test.ts",
     "prepublishOnly": "npm run build"
   },
@@ -35,10 +36,12 @@
   "homepage": "https://github.com/gacabartosz/ksef-mcp",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^5.2.1",
     "fast-xml-parser": "^5.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
