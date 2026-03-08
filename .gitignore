@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.db-journal
+audit.jsonl

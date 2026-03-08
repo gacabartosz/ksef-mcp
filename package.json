@@ -1,0 +1,54 @@
+{
+  "name": "ksef-mcp",
+  "version": "0.1.0",
+  "description": "MCP server dla KSeF (Krajowy System e-Faktur) — uwierzytelnianie, wystawianie i pobieranie e-faktur przez AI. Pierwszy publiczny KSeF MCP na świecie.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ksef-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"const f='dist/index.js',c=require('fs');let s=c.readFileSync(f,'utf8');if(!s.startsWith('#!'))c.writeFileSync(f,'#!/usr/bin/env node\\n'+s)\"",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "node --test tests/unit/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "ksef",
+    "e-faktura",
+    "invoice",
+    "poland",
+    "tax",
+    "ai",
+    "claude",
+    "chatgpt",
+    "model-context-protocol",
+    "krajowy-system-e-faktur"
+  ],
+  "author": "Bartosz Gaca <kontakt@bartoszgaca.pl> (https://bartoszgaca.pl)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gacabartosz/ksef-mcp"
+  },
+  "homepage": "https://github.com/gacabartosz/ksef-mcp",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "fast-xml-parser": "^5.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
