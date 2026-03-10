@@ -13,9 +13,16 @@ import {
 
 // ─── Schemas ────────────────────────────────────────────────────────────────────
 
+const EnvSetInput = z.object({
+  environment: z.enum(["test", "demo", "prod"]),
+  nip: z.string().length(10).optional(),
+  token: z.string().optional(),
+});
+
 const AuthInitInput = z.object({
   nip: z.string().length(10).optional(),
   token: z.string().optional(),
+  environment: z.enum(["test", "demo", "prod"]).optional(),
 });
 
 // ─── Tools ──────────────────────────────────────────────────────────────────────
@@ -51,11 +58,59 @@ registerTool(
 
 registerTool(
   {
+    name: "ksef_env_set",
+    description:
+      "Zmień środowisko KSeF (test/demo/prod), NIP lub token w runtime. " +
+      "Pozwala przełączać się między produkcją a testami bez restartu.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        environment: {
+          type: "string",
+          enum: ["test", "demo", "prod"],
+          description: "Środowisko KSeF: test, demo lub prod",
+        },
+        nip: {
+          type: "string",
+          description: "NIP podmiotu (10 cyfr). Opcjonalnie — zmienia bieżący NIP.",
+        },
+        token: {
+          type: "string",
+          description: "Token KSeF. Opcjonalnie — zmienia bieżący token.",
+        },
+      },
+      required: ["environment"],
+    },
+  },
+  async (args) => {
+    const input = EnvSetInput.parse(args);
+
+    const oldEnv = config.env;
+    config.setEnvironment(input.environment);
+
+    if (input.nip) config.setNip(input.nip);
+    if (input.token) config.setToken(input.token);
+
+    return toolResult({
+      status: "srodowisko_zmienione",
+      previousEnvironment: oldEnv,
+      environment: config.env,
+      baseUrl: config.baseUrl,
+      nip: config.maskedNip,
+      hint: oldEnv !== input.environment
+        ? "Środowisko zmienione. Jeśli była aktywna sesja, musisz się ponownie zalogować (ksef_auth_init)."
+        : "Środowisko bez zmian.",
+    });
+  },
+);
+
+registerTool(
+  {
     name: "ksef_auth_init",
     description:
       "Rozpocznij sesję KSeF używając tokena autoryzacyjnego (API v2). " +
       "Flow: challenge → ksef-token → token/redeem → JWT access + refresh. " +
-      "NIP i token można podać jako argumenty lub ustawić w KSEF_NIP i KSEF_TOKEN.",
+      "NIP, token i środowisko można podać jako argumenty lub ustawić w env.",
     inputSchema: {
       type: "object",
       properties: {
@@ -67,12 +122,23 @@ registerTool(
           type: "string",
           description: "Token autoryzacyjny KSeF. Domyślnie z env KSEF_TOKEN.",
         },
+        environment: {
+          type: "string",
+          enum: ["test", "demo", "prod"],
+          description: "Środowisko KSeF (test/demo/prod). Domyślnie z env KSEF_ENV.",
+        },
       },
     },
     annotations: { readOnlyHint: false },
   },
   async (args) => {
     const input = AuthInitInput.parse(args);
+
+    // Switch environment if specified
+    if (input.environment && input.environment !== config.env) {
+      config.setEnvironment(input.environment);
+    }
+
     const nip = input.nip || config.nip;
     const token = input.token || config.token;
 

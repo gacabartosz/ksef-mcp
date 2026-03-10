@@ -33,6 +33,22 @@ export const config = {
     if (!this.nip) return "(brak)";
     return this.nip.slice(0, 3) + "***" + this.nip.slice(-2);
   },
+
+  /** Switch environment at runtime (test/demo/prod). Clears cached session. */
+  setEnvironment(env: KsefEnvironment): void {
+    if (!KSEF_URLS[env]) throw new Error(`Nieznane środowisko: ${env}`);
+    this.env = env;
+  },
+
+  /** Override NIP at runtime. */
+  setNip(nip: string): void {
+    this.nip = nip;
+  },
+
+  /** Override token at runtime. */
+  setToken(token: string): void {
+    this.token = token;
+  },
 };
 
 export function ensureDataDirs(): void {
