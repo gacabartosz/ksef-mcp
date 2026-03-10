@@ -284,6 +284,8 @@ export function buildInvoiceXml(draft: DraftInvoice): string {
           KodKraju: "PL",
           ...buyerAddress,
         },
+        JST: 2,
+        GV: 2,
       },
       Fa: faSection,
     },
