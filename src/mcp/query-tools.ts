@@ -8,15 +8,22 @@ import { ksefRequest } from "../infra/ksef/client.js";
 
 const InvoicesQueryInput = z.object({
   dateFrom: z.string().describe("Data od (YYYY-MM-DD)"),
-  dateTo: z.string().describe("Data do (YYYY-MM-DD)"),
-  subjectType: z.enum(["subject1", "subject2", "subject3"]).optional()
-    .describe("Typ podmiotu: subject1=sprzedawca, subject2=nabywca, subject3=inny"),
+  dateTo: z.string().optional().describe("Data do (YYYY-MM-DD) — opcjonalna"),
+  dateType: z.enum(["Issue", "Invoicing", "PermanentStorage"]).optional()
+    .describe("Typ daty: Issue=wystawienia, Invoicing=przyjęcia, PermanentStorage=trwałego zapisu"),
+  subjectType: z.enum(["Subject1", "Subject2", "Subject3", "SubjectAuthorized"]).optional()
+    .describe("Typ podmiotu: Subject1=sprzedawca, Subject2=nabywca, Subject3=inny, SubjectAuthorized=upoważniony"),
   pageSize: z.number().int().min(10).max(100).optional(),
-  pageOffset: z.number().int().min(0).optional(),
+  continuationToken: z.string().optional().describe("Token kontynuacji z poprzedniego zapytania"),
 });
 
-const InvoiceRefInput = z.object({
-  ksefReferenceNumber: z.string().describe("Numer referencyjny KSeF faktury"),
+const InvoiceKsefNumberInput = z.object({
+  ksefNumber: z.string().describe("Numer KSeF faktury (35-36 znaków)"),
+});
+
+const SessionInvoiceInput = z.object({
+  sessionReferenceNumber: z.string().describe("Numer referencyjny sesji"),
+  invoiceReferenceNumber: z.string().describe("Numer referencyjny faktury w sesji"),
 });
 
 // ─── Tools ──────────────────────────────────────────────────────────────────────
@@ -32,16 +39,21 @@ registerTool(
       type: "object",
       properties: {
         dateFrom: { type: "string", description: "Data od (YYYY-MM-DD)" },
-        dateTo: { type: "string", description: "Data do (YYYY-MM-DD)" },
+        dateTo: { type: "string", description: "Data do (YYYY-MM-DD) — opcjonalna" },
+        dateType: {
+          type: "string",
+          enum: ["Issue", "Invoicing", "PermanentStorage"],
+          description: "Typ daty: Issue=wystawienia, Invoicing=przyjęcia w KSeF, PermanentStorage=trwałego zapisu",
+        },
         subjectType: {
           type: "string",
-          enum: ["subject1", "subject2", "subject3"],
-          description: "Typ podmiotu: subject1=sprzedawca, subject2=nabywca, subject3=inny",
+          enum: ["Subject1", "Subject2", "Subject3", "SubjectAuthorized"],
+          description: "Typ podmiotu: Subject1=sprzedawca, Subject2=nabywca, Subject3=inny, SubjectAuthorized=upoważniony",
         },
         pageSize: { type: "number", description: "Rozmiar strony (10-100, domyślnie 10)" },
-        pageOffset: { type: "number", description: "Numer strony (od 0)" },
+        continuationToken: { type: "string", description: "Token kontynuacji z poprzedniego zapytania" },
       },
-      required: ["dateFrom", "dateTo"],
+      required: ["dateFrom"],
     },
     annotations: { readOnlyHint: true },
   },
@@ -49,58 +61,58 @@ registerTool(
     const input = InvoicesQueryInput.parse(args);
     const session = requireSession();
 
-    const body = {
-      queryCriteria: {
-        subjectType: input.subjectType || "subject1",
-        type: "incremental",
-        acquisitionTimestampThresholdFrom: `${input.dateFrom}T00:00:00`,
-        acquisitionTimestampThresholdTo: `${input.dateTo}T23:59:59`,
+    const body: Record<string, unknown> = {
+      subjectType: input.subjectType || "Subject1",
+      dateRange: {
+        dateType: input.dateType || "Invoicing",
+        from: `${input.dateFrom}T00:00:00Z`,
+        ...(input.dateTo ? { to: `${input.dateTo}T23:59:59Z` } : {}),
       },
     };
 
-    const queryParams = new URLSearchParams();
-    queryParams.set("PageSize", String(input.pageSize || 10));
-    queryParams.set("PageOffset", String(input.pageOffset || 0));
+    const headers: Record<string, string> = {};
+    if (input.pageSize) {
+      headers["pageSize"] = String(input.pageSize);
+    }
+    if (input.continuationToken) {
+      headers["x-continuation-token"] = input.continuationToken;
+    }
+
+    const queryParts: string[] = [];
+    if (input.pageSize) queryParts.push(`pageSize=${input.pageSize}`);
+    const query = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
 
     const response = await ksefRequest<{
-      invoiceHeaderList: Array<{
-        invoiceReferenceNumber: string;
-        ksefReferenceNumber: string;
-        invoiceHash?: string;
+      invoices: Array<{
+        ksefNumber?: string;
+        invoiceNumber?: string;
         invoicingDate?: string;
-        subjectTo?: { issuedToIdentifier?: { identifier: string } };
-        subjectBy?: { issuedByIdentifier?: { identifier: string } };
+        subjectByNip?: string;
+        subjectToNip?: string;
         net?: string;
         vat?: string;
         gross?: string;
         schemaVersion?: string;
+        referenceNumber?: string;
       }>;
-      numberOfElements: number;
-      pageSize: number;
-      pageOffset: number;
+      hasMore: boolean;
+      isTruncated: boolean;
+      continuationToken?: string;
     }>(
       "POST",
-      `/online/Query/Invoice/Sync?${queryParams.toString()}`,
+      `/invoices/query/metadata${query}`,
       body,
-      { sessionToken: session.token },
+      {
+        sessionToken: session.accessToken,
+        ...(input.continuationToken ? {} : {}),
+      },
     );
 
-    const invoices = (response.invoiceHeaderList || []).map((inv) => ({
-      ksefReferenceNumber: inv.ksefReferenceNumber,
-      invoicingDate: inv.invoicingDate,
-      sellerNip: inv.subjectBy?.issuedByIdentifier?.identifier,
-      buyerNip: inv.subjectTo?.issuedToIdentifier?.identifier,
-      net: inv.net,
-      vat: inv.vat,
-      gross: inv.gross,
-      schemaVersion: inv.schemaVersion,
-    }));
-
     return toolResult({
-      count: response.numberOfElements,
-      pageSize: response.pageSize,
-      pageOffset: response.pageOffset,
-      invoices,
+      invoices: response.invoices || [],
+      hasMore: response.hasMore,
+      isTruncated: response.isTruncated,
+      continuationToken: response.continuationToken,
     });
   },
 );
@@ -108,53 +120,75 @@ registerTool(
 registerTool(
   {
     name: "ksef_invoice_get",
-    description: "Pobierz metadane faktury po numerze referencyjnym KSeF. Wymaga aktywnej sesji.",
+    description:
+      "Pobierz fakturę XML po numerze KSeF. Wymaga aktywnej sesji. " +
+      "Zwraca pełny XML faktury.",
     inputSchema: {
       type: "object",
       properties: {
-        ksefReferenceNumber: { type: "string", description: "Numer referencyjny KSeF faktury" },
+        ksefNumber: { type: "string", description: "Numer KSeF faktury (35-36 znaków)" },
       },
-      required: ["ksefReferenceNumber"],
+      required: ["ksefNumber"],
     },
     annotations: { readOnlyHint: true },
   },
   async (args) => {
-    const input = InvoiceRefInput.parse(args);
+    const input = InvoiceKsefNumberInput.parse(args);
     const session = requireSession();
 
-    const response = await ksefRequest<Record<string, unknown>>(
-      "GET",
-      `/online/Invoice/Get/${input.ksefReferenceNumber}`,
-      undefined,
-      { sessionToken: session.token },
-    );
+    // GET /invoices/ksef/{ksefNumber} returns XML
+    const { config: cfg } = await import("../utils/config.js");
+    const url = `${cfg.baseUrl}/invoices/ksef/${input.ksefNumber}`;
 
-    return toolResult(response);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+          Accept: "application/xml",
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        return toolError(`Błąd pobierania faktury: HTTP ${response.status}`);
+      }
+
+      const xml = await response.text();
+      return toolResult({ ksefNumber: input.ksefNumber, xml });
+    } finally {
+      clearTimeout(timer);
+    }
   },
 );
 
 registerTool(
   {
     name: "ksef_invoice_status",
-    description: "Sprawdź status przetwarzania faktury w KSeF. Wymaga aktywnej sesji.",
+    description:
+      "Sprawdź status przetwarzania faktury w sesji KSeF. Wymaga aktywnej sesji. " +
+      "Potrzebne: numer referencyjny sesji i numer referencyjny faktury.",
     inputSchema: {
       type: "object",
       properties: {
-        ksefReferenceNumber: { type: "string", description: "Numer referencyjny KSeF faktury" },
+        sessionReferenceNumber: { type: "string", description: "Numer referencyjny sesji" },
+        invoiceReferenceNumber: { type: "string", description: "Numer referencyjny faktury" },
       },
-      required: ["ksefReferenceNumber"],
+      required: ["sessionReferenceNumber", "invoiceReferenceNumber"],
     },
     annotations: { readOnlyHint: true },
   },
   async (args) => {
-    const input = InvoiceRefInput.parse(args);
+    const input = SessionInvoiceInput.parse(args);
     const session = requireSession();
 
     const response = await ksefRequest<Record<string, unknown>>(
       "GET",
-      `/online/Invoice/Status/${input.ksefReferenceNumber}`,
+      `/sessions/${input.sessionReferenceNumber}/invoices/${input.invoiceReferenceNumber}`,
       undefined,
-      { sessionToken: session.token },
+      { sessionToken: session.accessToken },
     );
 
     return toolResult(response);
@@ -165,24 +199,23 @@ registerTool(
   {
     name: "ksef_invoice_xml",
     description:
-      "Pobierz XML faktury z KSeF (format FA(3)). " +
-      "Zwraca pełną treść XML dokumentu. Wymaga aktywnej sesji.",
+      "Pobierz XML faktury z KSeF po numerze KSeF (format FA(3)). " +
+      "Alias dla ksef_invoice_get. Wymaga aktywnej sesji.",
     inputSchema: {
       type: "object",
       properties: {
-        ksefReferenceNumber: { type: "string", description: "Numer referencyjny KSeF faktury" },
+        ksefNumber: { type: "string", description: "Numer KSeF faktury" },
       },
-      required: ["ksefReferenceNumber"],
+      required: ["ksefNumber"],
     },
     annotations: { readOnlyHint: true },
   },
   async (args) => {
-    const input = InvoiceRefInput.parse(args);
+    const input = InvoiceKsefNumberInput.parse(args);
     const session = requireSession();
 
-    // Invoice XML endpoint zwraca XML, nie JSON
     const { config: cfg } = await import("../utils/config.js");
-    const url = `${cfg.baseUrl}/online/Invoice/Get/${input.ksefReferenceNumber}`;
+    const url = `${cfg.baseUrl}/invoices/ksef/${input.ksefNumber}`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
@@ -190,7 +223,7 @@ registerTool(
     try {
       const response = await fetch(url, {
         headers: {
-          SessionToken: session.token,
+          Authorization: `Bearer ${session.accessToken}`,
           Accept: "application/xml",
         },
         signal: controller.signal,
@@ -201,7 +234,7 @@ registerTool(
       }
 
       const xml = await response.text();
-      return toolResult({ ksefReferenceNumber: input.ksefReferenceNumber, xml });
+      return toolResult({ ksefNumber: input.ksefNumber, xml });
     } finally {
       clearTimeout(timer);
     }
@@ -212,47 +245,61 @@ registerTool(
   {
     name: "ksef_upo_download",
     description:
-      "Pobierz UPO (Urzędowe Poświadczenie Odbioru) dla sesji KSeF. " +
+      "Pobierz UPO (Urzędowe Poświadczenie Odbioru) dla faktury z sesji KSeF. " +
       "UPO potwierdza przyjęcie faktury przez system. Wymaga aktywnej sesji.",
     inputSchema: {
       type: "object",
       properties: {
-        referenceNumber: {
+        sessionReferenceNumber: {
           type: "string",
-          description: "Numer referencyjny sesji KSeF (nie faktury). Domyślnie bieżąca sesja.",
+          description: "Numer referencyjny sesji wysyłkowej",
+        },
+        invoiceReferenceNumber: {
+          type: "string",
+          description: "Numer referencyjny faktury w sesji (opcjonalny — jeśli brak, pobiera UPO sesji)",
         },
       },
+      required: ["sessionReferenceNumber"],
     },
     annotations: { readOnlyHint: true },
   },
   async (args) => {
     const session = requireSession();
-    const refNr = (args.referenceNumber as string) || session.referenceNumber;
+    const sessionRef = args.sessionReferenceNumber as string;
+    const invoiceRef = args.invoiceReferenceNumber as string | undefined;
 
-    const response = await ksefRequest<{
-      processingCode: number;
-      processingDescription: string;
-      upo?: string;
-    }>(
-      "GET",
-      `/online/Session/Status/${refNr}`,
-      undefined,
-      { sessionToken: session.token },
-    );
+    if (invoiceRef) {
+      // Get UPO for specific invoice
+      try {
+        const { getInvoiceUpo } = await import("../infra/ksef/session.js");
+        const upoXml = await getInvoiceUpo(session.accessToken, sessionRef, invoiceRef);
+        return toolResult({
+          sessionReferenceNumber: sessionRef,
+          invoiceReferenceNumber: invoiceRef,
+          upo: upoXml,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return toolError(`Błąd pobierania UPO: ${msg}`);
+      }
+    } else {
+      // Get session status which includes UPO download URLs
+      const { getSessionStatus } = await import("../infra/ksef/session.js");
+      const status = await getSessionStatus(session.accessToken, sessionRef);
 
-    if (response.upo) {
+      if (status.upo && status.upo.pages.length > 0) {
+        return toolResult({
+          sessionReferenceNumber: sessionRef,
+          status: status.status,
+          upoPages: status.upo.pages,
+        });
+      }
+
       return toolResult({
-        referenceNumber: refNr,
-        upo: response.upo,
-        processingCode: response.processingCode,
+        sessionReferenceNumber: sessionRef,
+        status: status.status,
+        message: "UPO jeszcze niedostępne",
       });
     }
-
-    return toolResult({
-      referenceNumber: refNr,
-      status: "UPO jeszcze niedostępne",
-      processingCode: response.processingCode,
-      processingDescription: response.processingDescription,
-    });
   },
 );

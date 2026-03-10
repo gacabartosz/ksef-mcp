@@ -19,13 +19,16 @@ import {
 // ─── Schemas ────────────────────────────────────────────────────────────────────
 
 const TokenGenerateInput = z.object({
-  description: z.string().min(1).describe("Opis tokena (do identyfikacji)"),
-  permissions: z.array(z.string()).min(1).describe("Lista uprawnień, np. ['read', 'write']"),
+  description: z.string().min(5).max(256).describe("Opis tokena (5-256 znaków)"),
+  permissions: z.array(z.enum([
+    "InvoiceRead", "InvoiceWrite", "CredentialsRead", "CredentialsManage",
+    "SubunitManage", "EnforcementOperations", "Introspection",
+  ])).min(1).describe("Lista uprawnień tokena"),
 });
 
 const TokenListInput = z.object({
-  pageSize: z.number().int().min(1).max(100).optional().describe("Rozmiar strony (domyślnie wg API)"),
-  pageOffset: z.number().int().min(0).optional().describe("Offset strony (od 0)"),
+  pageSize: z.number().int().min(10).max(100).optional().describe("Rozmiar strony (10-100, domyślnie 10)"),
+  continuationToken: z.string().optional().describe("Token kontynuacji z poprzedniego zapytania"),
 });
 
 const TokenRefInput = z.object({
@@ -50,8 +53,12 @@ registerTool(
         },
         permissions: {
           type: "array",
-          items: { type: "string" },
-          description: "Lista uprawnień, np. ['read', 'write']",
+          items: {
+            type: "string",
+            enum: ["InvoiceRead", "InvoiceWrite", "CredentialsRead", "CredentialsManage",
+                   "SubunitManage", "EnforcementOperations", "Introspection"],
+          },
+          description: "Lista uprawnień tokena",
         },
       },
       required: ["description", "permissions"],
@@ -63,7 +70,7 @@ registerTool(
     const session = requireSession();
 
     try {
-      const result = await generateKsefToken(session.token, {
+      const result = await generateKsefToken(session.accessToken, {
         description: input.description,
         permissions: input.permissions,
       });
@@ -81,9 +88,7 @@ registerTool(
       return toolResult({
         status: "token_wygenerowany",
         referenceNumber: result.referenceNumber,
-        processingCode: result.processingCode,
-        processingDescription: result.processingDescription,
-        hint: "Token jest dostarczany przez KSeF. Użyj ksef_token_get aby sprawdzić status.",
+        hint: "Token został wygenerowany. Użyj ksef_token_get aby sprawdzić status.",
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -113,11 +118,11 @@ registerTool(
       properties: {
         pageSize: {
           type: "number",
-          description: "Rozmiar strony (domyślnie wg API)",
+          description: "Rozmiar strony (10-100, domyślnie 10)",
         },
-        pageOffset: {
-          type: "number",
-          description: "Offset strony (od 0)",
+        continuationToken: {
+          type: "string",
+          description: "Token kontynuacji z poprzedniego zapytania",
         },
       },
     },
@@ -128,17 +133,15 @@ registerTool(
     const session = requireSession();
 
     try {
-      const result = await listKsefTokens(session.token, {
+      const result = await listKsefTokens(session.accessToken, {
         pageSize: input.pageSize,
-        pageOffset: input.pageOffset,
+        continuationToken: input.continuationToken,
       });
 
       return toolResult({
         status: "lista_tokenow",
-        credentials: result.credentials,
-        numberOfElements: result.numberOfElements,
-        pageSize: result.pageSize,
-        pageOffset: result.pageOffset,
+        tokens: result.tokens,
+        continuationToken: result.continuationToken,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -170,16 +173,17 @@ registerTool(
     const session = requireSession();
 
     try {
-      const result = await getKsefToken(session.token, input.referenceNumber);
+      const result = await getKsefToken(session.accessToken, input.referenceNumber);
 
       return toolResult({
         status: "szczegoly_tokena",
         referenceNumber: result.referenceNumber,
         description: result.description,
-        credentialStatus: result.credentialStatus,
-        createdAt: result.createdAt,
-        lastUsedAt: result.lastUsedAt,
-        permissions: result.permissions,
+        tokenStatus: result.status,
+        dateCreated: result.dateCreated,
+        requestedPermissions: result.requestedPermissions,
+        authorIdentifier: result.authorIdentifier,
+        contextIdentifier: result.contextIdentifier,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -254,7 +258,7 @@ registerTool(
 
     // Approval confirmed — proceed with revocation
     try {
-      const result = await revokeKsefToken(session.token, input.referenceNumber);
+      await revokeKsefToken(session.accessToken, input.referenceNumber);
 
       auditLog({
         action: "token_revoked",
@@ -267,9 +271,7 @@ registerTool(
 
       return toolResult({
         status: "token_uniewaziony",
-        referenceNumber: result.referenceNumber,
-        processingCode: result.processingCode,
-        processingDescription: result.processingDescription,
+        referenceNumber: input.referenceNumber,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

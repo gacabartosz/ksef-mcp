@@ -5,7 +5,7 @@ import { requireSession } from "../infra/ksef/auth.js";
 import { auditLog, hashNip } from "../domain/audit.js";
 import {
   openBatchSession,
-  sendBatchPart,
+  uploadBatchPart,
   closeBatchSession,
   getBatchStatus,
 } from "../infra/ksef/batch.js";
@@ -13,13 +13,23 @@ import {
 // ─── Schemas ────────────────────────────────────────────────────────────────────
 
 const BatchOpenInput = z.object({
+  fileSize: z.number().int().min(1).describe("Rozmiar pliku paczki w bajtach"),
+  fileHash: z.string().describe("SHA-256 Base64 hash pliku paczki"),
+  fileParts: z.array(z.object({
+    ordinalNumber: z.number().int().min(1),
+    partSize: z.number().int().min(1),
+    partHash: z.string(),
+  })).min(1).describe("Lista części pliku paczki"),
   formCode: z.string().optional().describe("Kod formularza (domyślnie 'FA')"),
 });
 
-const BatchSendPartInput = z.object({
+const BatchUploadPartInput = z.object({
   referenceNumber: z.string().describe("Numer referencyjny sesji batch"),
-  partNumber: z.number().int().min(1).describe("Numer części (od 1)"),
-  payload: z.string().describe("Zaszyfrowany ZIP jako Base64"),
+  ordinalNumber: z.number().int().min(1).describe("Numer porządkowy części"),
+  uploadUrl: z.string().describe("Pre-signed URL do uploadu"),
+  uploadMethod: z.string().optional().describe("Metoda HTTP (domyślnie PUT)"),
+  uploadHeaders: z.record(z.string()).optional().describe("Nagłówki do uploadu"),
+  payload: z.string().describe("Zaszyfrowane dane części jako Base64"),
 });
 
 const BatchRefInput = z.object({
@@ -32,26 +42,44 @@ registerTool(
   {
     name: "ksef_batch_open",
     description:
-      "Otwórz sesję batch do wysyłania wielu faktur jednocześnie. " +
-      "Wymaga aktywnej sesji KSeF. Zwraca numer referencyjny sesji batch.",
+      "Otwórz sesję batch do wysyłania wielu faktur jednocześnie (API v2). " +
+      "Wymaga aktywnej sesji KSeF. Podaj rozmiar pliku, hash i listę części. " +
+      "Zwraca numer referencyjny i pre-signed URLs do uploadu części.",
     inputSchema: {
       type: "object",
       properties: {
-        formCode: {
-          type: "string",
-          description: "Kod formularza (domyślnie 'FA')",
+        fileSize: { type: "number", description: "Rozmiar pliku paczki w bajtach" },
+        fileHash: { type: "string", description: "SHA-256 Base64 hash pliku paczki" },
+        fileParts: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              ordinalNumber: { type: "number", description: "Numer porządkowy części (od 1)" },
+              partSize: { type: "number", description: "Rozmiar części w bajtach" },
+              partHash: { type: "string", description: "SHA-256 Base64 hash części" },
+            },
+            required: ["ordinalNumber", "partSize", "partHash"],
+          },
+          description: "Lista części pliku paczki",
         },
+        formCode: { type: "string", description: "Kod formularza (domyślnie 'FA')" },
       },
+      required: ["fileSize", "fileHash", "fileParts"],
     },
   },
   async (args) => {
     const startMs = Date.now();
     const input = BatchOpenInput.parse(args);
     const session = requireSession();
-    const formCode = input.formCode || "FA";
 
     try {
-      const result = await openBatchSession(session.token, formCode);
+      const result = await openBatchSession(
+        session.accessToken,
+        input.fileSize,
+        input.fileHash,
+        input.fileParts,
+      );
 
       auditLog({
         action: "batch_session_opened",
@@ -59,16 +87,15 @@ registerTool(
         nipHash: hashNip(session.nip),
         ksefReferenceNumber: result.referenceNumber,
         status: "success",
-        details: `formCode: ${formCode}`,
+        details: `parts: ${input.fileParts.length}`,
         durationMs: Date.now() - startMs,
       });
 
       return toolResult({
         status: "sesja_batch_otwarta",
         referenceNumber: result.referenceNumber,
-        processingCode: result.processingCode,
-        processingDescription: result.processingDescription,
-        hint: "Użyj ksef_batch_send_part do wysyłania części, potem ksef_batch_close.",
+        partUploadRequests: result.partUploadRequests,
+        hint: "Użyj pre-signed URLs do uploadu części, potem ksef_batch_close.",
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -91,39 +118,38 @@ registerTool(
   {
     name: "ksef_batch_send_part",
     description:
-      "Wyślij część (part) zaszyfrowanego ZIP-a z fakturami w sesji batch. " +
+      "Wyślij część paczki na pre-signed URL uzyskany z ksef_batch_open. " +
       "Wymaga aktywnej sesji KSeF i otwartej sesji batch.",
     inputSchema: {
       type: "object",
       properties: {
-        referenceNumber: {
-          type: "string",
-          description: "Numer referencyjny sesji batch",
+        referenceNumber: { type: "string", description: "Numer referencyjny sesji batch" },
+        ordinalNumber: { type: "number", description: "Numer porządkowy części (od 1)" },
+        uploadUrl: { type: "string", description: "Pre-signed URL do uploadu" },
+        uploadMethod: { type: "string", description: "Metoda HTTP (domyślnie PUT)" },
+        uploadHeaders: {
+          type: "object",
+          description: "Nagłówki do uploadu (z partUploadRequests)",
         },
-        partNumber: {
-          type: "number",
-          description: "Numer części (od 1)",
-        },
-        payload: {
-          type: "string",
-          description: "Zaszyfrowany ZIP jako Base64",
-        },
+        payload: { type: "string", description: "Zaszyfrowane dane części jako Base64" },
       },
-      required: ["referenceNumber", "partNumber", "payload"],
+      required: ["referenceNumber", "ordinalNumber", "uploadUrl", "payload"],
     },
     annotations: { destructiveHint: true },
   },
   async (args) => {
     const startMs = Date.now();
-    const input = BatchSendPartInput.parse(args);
+    const input = BatchUploadPartInput.parse(args);
     const session = requireSession();
 
     try {
-      const result = await sendBatchPart(
-        session.token,
-        input.referenceNumber,
-        input.partNumber,
-        input.payload,
+      await uploadBatchPart(
+        {
+          method: input.uploadMethod || "PUT",
+          url: input.uploadUrl,
+          headers: input.uploadHeaders || {},
+        },
+        Buffer.from(input.payload, "base64"),
       );
 
       auditLog({
@@ -132,16 +158,14 @@ registerTool(
         nipHash: hashNip(session.nip),
         ksefReferenceNumber: input.referenceNumber,
         status: "success",
-        details: `part: ${input.partNumber}`,
+        details: `part: ${input.ordinalNumber}`,
         durationMs: Date.now() - startMs,
       });
 
       return toolResult({
         status: "czesc_wyslana",
-        referenceNumber: result.referenceNumber,
-        partNumber: result.partNumber,
-        processingCode: result.processingCode,
-        processingDescription: result.processingDescription,
+        referenceNumber: input.referenceNumber,
+        ordinalNumber: input.ordinalNumber,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -152,7 +176,7 @@ registerTool(
         nipHash: hashNip(session.nip),
         ksefReferenceNumber: input.referenceNumber,
         status: "error",
-        details: `part: ${input.partNumber}, error: ${msg}`,
+        details: `part: ${input.ordinalNumber}, error: ${msg}`,
         durationMs: Date.now() - startMs,
       });
 
@@ -185,7 +209,7 @@ registerTool(
     const session = requireSession();
 
     try {
-      const result = await closeBatchSession(session.token, input.referenceNumber);
+      await closeBatchSession(session.accessToken, input.referenceNumber);
 
       auditLog({
         action: "batch_session_closed",
@@ -198,9 +222,7 @@ registerTool(
 
       return toolResult({
         status: "sesja_batch_zamknieta",
-        referenceNumber: result.referenceNumber,
-        processingCode: result.processingCode,
-        processingDescription: result.processingDescription,
+        referenceNumber: input.referenceNumber,
         hint: "Sprawdź status przetwarzania: ksef_batch_status.",
       });
     } catch (err) {
@@ -225,14 +247,14 @@ registerTool(
   {
     name: "ksef_batch_status",
     description:
-      "Sprawdź status sesji batch. " +
+      "Sprawdź status sesji batch (lub online). " +
       "Wymaga aktywnej sesji KSeF.",
     inputSchema: {
       type: "object",
       properties: {
         referenceNumber: {
           type: "string",
-          description: "Numer referencyjny sesji batch",
+          description: "Numer referencyjny sesji batch/online",
         },
       },
       required: ["referenceNumber"],
@@ -244,19 +266,22 @@ registerTool(
     const session = requireSession();
 
     try {
-      const result = await getBatchStatus(session.token, input.referenceNumber);
+      const result = await getBatchStatus(session.accessToken, input.referenceNumber);
 
       return toolResult({
-        status: "status_batch",
-        referenceNumber: result.referenceNumber,
-        processingCode: result.processingCode,
-        processingDescription: result.processingDescription,
-        numberOfInvoices: result.numberOfInvoices,
-        numberOfParts: result.numberOfParts,
+        status: "status_sesji",
+        referenceNumber: input.referenceNumber,
+        sessionStatus: result.status,
+        dateCreated: result.dateCreated,
+        dateUpdated: result.dateUpdated,
+        invoiceCount: result.invoiceCount,
+        successfulInvoiceCount: result.successfulInvoiceCount,
+        failedInvoiceCount: result.failedInvoiceCount,
+        upo: result.upo,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return toolError(`Błąd sprawdzania statusu batch: ${msg}`);
+      return toolError(`Błąd sprawdzania statusu sesji: ${msg}`);
     }
   },
 );

@@ -1,52 +1,70 @@
-import { publicEncrypt, constants, createCipheriv, createHash, randomBytes } from "node:crypto";
+import { publicEncrypt, constants, createCipheriv, createHash, randomBytes, X509Certificate } from "node:crypto";
 import { ksefRequest } from "./client.js";
 import { log } from "../../utils/logger.js";
 
-let cachedPublicKey: string | null = null;
+// Cache: usage → PEM string
+const cachedPublicKeys = new Map<string, string>();
 
-interface PublicKeyResponse {
-  // KSeF zwraca klucz publiczny w PEM
-  [key: string]: unknown;
+interface PublicKeyCertificate {
+  certificate: string; // DER Base64
+  validFrom: string;
+  validTo: string;
+  usage: string[]; // "KsefTokenEncryption" | "SymmetricKeyEncryption"
 }
 
 /**
- * Pobierz klucz publiczny KSeF do szyfrowania.
- * Endpoint: GET /online/Session/AuthorisationChallenge (klucz w response)
- * lub dedykowany endpoint na danym środowisku.
+ * Get KSeF public key certificate for a specific usage.
+ * GET /security/public-key-certificates
+ *
+ * @param usage — "KsefTokenEncryption" (for auth) or "SymmetricKeyEncryption" (for invoice encryption)
  */
-export async function getKsefPublicKey(): Promise<string> {
-  if (cachedPublicKey) return cachedPublicKey;
+export async function getKsefPublicKey(usage: "KsefTokenEncryption" | "SymmetricKeyEncryption" = "SymmetricKeyEncryption"): Promise<string> {
+  const cached = cachedPublicKeys.get(usage);
+  if (cached) return cached;
 
-  // KSeF udostępnia klucz publiczny — na środowisku testowym
-  // jest dostępny pod stałym URL-em
-  log("info", "Pobieranie klucza publicznego KSeF");
+  log("info", `Pobieranie klucza publicznego KSeF (${usage})`);
 
-  // Klucz publiczny KSeF dla środowiska testowego (RSA 2048)
-  // W produkcji należy pobrać z oficjalnego źródła MF
-  const response = await ksefRequest<PublicKeyResponse>(
+  const certs = await ksefRequest<PublicKeyCertificate[]>(
     "GET",
-    "/online/Session/AuthorisationChallenge/PublicKey",
-  ).catch(() => null);
+    "/security/public-key-certificates",
+  );
 
-  if (response && typeof response === "object") {
-    const key = Object.values(response).find((v) => typeof v === "string" && v.includes("BEGIN PUBLIC KEY"));
-    if (key) {
-      cachedPublicKey = key as string;
-      return cachedPublicKey;
-    }
+  // Find valid cert for the requested usage
+  const now = new Date();
+  const cert = certs.find((c) =>
+    c.usage.includes(usage) &&
+    new Date(c.validFrom) <= now &&
+    new Date(c.validTo) >= now,
+  );
+
+  if (!cert) {
+    throw new Error(
+      `Nie znaleziono ważnego certyfikatu KSeF dla ${usage}. ` +
+      `Dostępne: ${certs.map((c) => c.usage.join(",")).join("; ")}`,
+    );
   }
 
-  // Fallback: klucz publiczny KSeF TEST (ten sam dla wszystkich użytkowników TE)
-  // Źródło: dokumentacja KSeF / ksef-docs
-  throw new Error(
-    "Nie udało się pobrać klucza publicznego KSeF. " +
-    "Ustaw zmienną KSEF_PUBLIC_KEY lub sprawdź połączenie z API.",
-  );
+  // Convert DER Base64 to PEM public key
+  const derBuffer = Buffer.from(cert.certificate, "base64");
+
+  let publicKeyPem: string;
+  try {
+    // Try parsing as X.509 certificate to extract public key
+    const x509 = new X509Certificate(derBuffer);
+    publicKeyPem = x509.publicKey.export({ type: "spki", format: "pem" }) as string;
+  } catch {
+    // Fallback: treat as raw DER public key
+    const b64Lines = cert.certificate.match(/.{1,64}/g)?.join("\n") ?? cert.certificate;
+    publicKeyPem = `-----BEGIN PUBLIC KEY-----\n${b64Lines}\n-----END PUBLIC KEY-----`;
+  }
+
+  cachedPublicKeys.set(usage, publicKeyPem);
+  log("info", `Klucz publiczny KSeF pobrany (${usage}), ważny do: ${cert.validTo}`);
+  return publicKeyPem;
 }
 
 /**
- * Szyfruj token autoryzacyjny KSeF kluczem publicznym RSA (OAEP + SHA-256).
- * Format wejściowy: token + "|" + timestamp
+ * Encrypt with RSA-OAEP (SHA-256).
  */
 export function encryptWithRsaOaep(plaintext: Buffer, publicKeyPem: string): Buffer {
   return publicEncrypt(
@@ -60,7 +78,7 @@ export function encryptWithRsaOaep(plaintext: Buffer, publicKeyPem: string): Buf
 }
 
 /**
- * Szyfruj dane AES-256-CBC z PKCS#7 padding.
+ * Encrypt with AES-256-CBC (PKCS#7 padding).
  */
 export function encryptAes256Cbc(
   plaintext: Buffer,
@@ -80,7 +98,14 @@ export function sha256hex(data: Buffer): string {
 }
 
 /**
- * Generuj losowy klucz AES 256-bit.
+ * SHA-256 Base64 hash (used by KSeF API v2).
+ */
+export function sha256base64(data: Buffer): string {
+  return createHash("sha256").update(data).digest("base64");
+}
+
+/**
+ * Generate random AES 256-bit key.
  */
 export function generateAesKey(): Buffer {
   return randomBytes(32);

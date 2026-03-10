@@ -2,7 +2,14 @@ import { z } from "zod";
 import { registerTool } from "./registry.js";
 import { toolResult, toolError } from "../utils/errors.js";
 import { config } from "../utils/config.js";
-import { getActiveSession, initTokenSession, getSessionStatus, terminateSession, requireSession } from "../infra/ksef/auth.js";
+import {
+  getActiveSession,
+  initTokenSession,
+  getAuthStatus,
+  terminateSession,
+  requireSession,
+  refreshAccessToken,
+} from "../infra/ksef/auth.js";
 
 // ─── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +32,7 @@ registerTool(
     return toolResult({
       environment: config.env,
       baseUrl: config.baseUrl,
+      apiVersion: "v2",
       nip: config.maskedNip,
       approvalMode: config.approvalMode,
       session: session
@@ -33,6 +41,8 @@ registerTool(
             referenceNumber: session.referenceNumber,
             startedAt: session.startedAt,
             contextName: session.contextName || null,
+            accessTokenValidUntil: session.accessTokenValidUntil,
+            refreshTokenValidUntil: session.refreshTokenValidUntil,
           }
         : { active: false },
     });
@@ -43,9 +53,9 @@ registerTool(
   {
     name: "ksef_auth_init",
     description:
-      "Rozpocznij sesję KSeF używając tokena autoryzacyjnego. " +
-      "NIP i token można podać jako argumenty lub ustawić w zmiennych środowiskowych KSEF_NIP i KSEF_TOKEN. " +
-      "Wymaga aktywnego połączenia z API KSeF.",
+      "Rozpocznij sesję KSeF używając tokena autoryzacyjnego (API v2). " +
+      "Flow: challenge → ksef-token → token/redeem → JWT access + refresh. " +
+      "NIP i token można podać jako argumenty lub ustawić w KSEF_NIP i KSEF_TOKEN.",
     inputSchema: {
       type: "object",
       properties: {
@@ -87,6 +97,8 @@ registerTool(
       nip: config.maskedNip,
       contextName: session.contextName || null,
       startedAt: session.startedAt,
+      accessTokenValidUntil: session.accessTokenValidUntil,
+      refreshTokenValidUntil: session.refreshTokenValidUntil,
     });
   },
 );
@@ -94,7 +106,7 @@ registerTool(
 registerTool(
   {
     name: "ksef_auth_status",
-    description: "Sprawdź status aktywnej sesji KSeF — czy jest aktywna, ile faktur przetworzono.",
+    description: "Sprawdź status aktywnej sesji KSeF — czy jest aktywna, tokeny, ważność.",
     inputSchema: { type: "object", properties: {}, required: [] },
     annotations: { readOnlyHint: true },
   },
@@ -108,7 +120,7 @@ registerTool(
     }
 
     try {
-      const status = await getSessionStatus(session);
+      const authStatus = await getAuthStatus(session);
       return toolResult({
         status: "aktywna",
         referenceNumber: session.referenceNumber,
@@ -116,9 +128,9 @@ registerTool(
         nip: config.maskedNip,
         contextName: session.contextName || null,
         startedAt: session.startedAt,
-        processingCode: status.processingCode,
-        processingDescription: status.processingDescription,
-        numberOfInvoices: status.numberOfInvoices ?? 0,
+        accessTokenValidUntil: session.accessTokenValidUntil,
+        refreshTokenValidUntil: session.refreshTokenValidUntil,
+        authDetails: authStatus,
       });
     } catch {
       return toolResult({
@@ -133,7 +145,7 @@ registerTool(
 registerTool(
   {
     name: "ksef_auth_terminate",
-    description: "Zakończ aktywną sesję KSeF. Operacja nieodwracalna.",
+    description: "Zakończ aktywną sesję KSeF (unieważnij refresh token). Operacja nieodwracalna.",
     inputSchema: { type: "object", properties: {}, required: [] },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },

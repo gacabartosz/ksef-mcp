@@ -61,7 +61,7 @@ export async function ksefRequest<T>(
   };
 
   if (options?.sessionToken) {
-    headers["SessionToken"] = options.sessionToken;
+    headers["Authorization"] = `Bearer ${options.sessionToken}`;
   }
 
   if (body && !options?.rawBody) {

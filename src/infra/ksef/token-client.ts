@@ -10,132 +10,126 @@ export interface GenerateTokenParams {
 
 export interface GenerateTokenResponse {
   referenceNumber: string;
-  processingCode: number;
-  processingDescription: string;
+  token: string; // In v2, token value IS returned directly
 }
 
 export interface TokenListParams {
   pageSize?: number;
-  pageOffset?: number;
+  continuationToken?: string;
 }
 
-export interface TokenCredential {
+export interface TokenListItem {
   referenceNumber: string;
   description?: string;
-  credentialStatus: string;
-  createdAt?: string;
-  lastUsedAt?: string;
-}
-
-export interface TokenListResponse {
-  credentials: TokenCredential[];
-  numberOfElements: number;
-  pageSize: number;
-  pageOffset: number;
-}
-
-export interface TokenStatusResponse {
-  referenceNumber: string;
-  description?: string;
-  credentialStatus: string;
-  createdAt?: string;
+  status?: string;
+  dateCreated?: string;
   lastUsedAt?: string;
   permissions?: string[];
 }
 
-export interface RevokeTokenResponse {
-  referenceNumber: string;
-  processingCode: number;
-  processingDescription: string;
+export interface TokenListResponse {
+  tokens: TokenListItem[];
+  continuationToken?: string;
 }
 
-// ─── Token Management API ───────────────────────────────────────────────────────
+export interface TokenStatusResponse {
+  referenceNumber: string;
+  description: string;
+  status: string;
+  authorIdentifier?: {
+    type: string;
+    value: string;
+  };
+  contextIdentifier?: {
+    type: string;
+    value: string;
+  };
+  dateCreated?: string;
+  requestedPermissions?: string[];
+}
+
+// ─── Token Management API (v2) ──────────────────────────────────────────────────
 
 /**
  * Generate a new KSeF API token.
- * POST /online/Credentials/GenerateToken
+ * POST /tokens
  *
- * IMPORTANT: The response contains only a referenceNumber,
- * NOT the token value itself. The token is delivered via KSeF.
+ * In v2, the token value IS returned in the response.
  */
 export async function generateKsefToken(
-  sessionToken: string,
+  accessToken: string,
   params: GenerateTokenParams,
 ): Promise<GenerateTokenResponse> {
   log("info", `Generating KSeF token: ${params.description}`);
 
   return ksefRequest<GenerateTokenResponse>(
     "POST",
-    "/online/Credentials/GenerateToken",
+    "/tokens",
     {
-      generateToken: {
-        description: params.description,
-        credentialPermissions: params.permissions,
-      },
+      description: params.description,
+      permissions: params.permissions,
     },
-    { sessionToken },
+    { sessionToken: accessToken },
   );
 }
 
 /**
- * List KSeF tokens/credentials.
- * GET /online/Credentials/CredentialsList
+ * List KSeF tokens.
+ * GET /tokens
  */
 export async function listKsefTokens(
-  sessionToken: string,
+  accessToken: string,
   params?: TokenListParams,
 ): Promise<TokenListResponse> {
   log("info", "Listing KSeF tokens");
 
   const queryParts: string[] = [];
   if (params?.pageSize) queryParts.push(`pageSize=${params.pageSize}`);
-  if (params?.pageOffset) queryParts.push(`pageOffset=${params.pageOffset}`);
+  if (params?.continuationToken) {
+    queryParts.push(`x-continuation-token=${encodeURIComponent(params.continuationToken)}`);
+  }
   const query = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
 
   return ksefRequest<TokenListResponse>(
     "GET",
-    `/online/Credentials/CredentialsList${query}`,
+    `/tokens${query}`,
     undefined,
-    { sessionToken },
+    { sessionToken: accessToken },
   );
 }
 
 /**
  * Get details of a specific KSeF token.
- * GET /online/Credentials/Status/{referenceNumber}
- *
- * Returns metadata only — NEVER the token value.
+ * GET /tokens/{referenceNumber}
  */
 export async function getKsefToken(
-  sessionToken: string,
+  accessToken: string,
   referenceNumber: string,
 ): Promise<TokenStatusResponse> {
   log("info", `Getting KSeF token status: ${referenceNumber}`);
 
   return ksefRequest<TokenStatusResponse>(
     "GET",
-    `/online/Credentials/Status/${referenceNumber}`,
+    `/tokens/${referenceNumber}`,
     undefined,
-    { sessionToken },
+    { sessionToken: accessToken },
   );
 }
 
 /**
  * Revoke a KSeF token.
- * DELETE /online/Credentials/Revoke/{referenceNumber}
- *
- * This is a destructive operation — the token cannot be restored.
+ * DELETE /tokens/{referenceNumber}
  */
 export async function revokeKsefToken(
-  sessionToken: string,
+  accessToken: string,
   referenceNumber: string,
-): Promise<RevokeTokenResponse> {
+): Promise<void> {
   log("info", `Revoking KSeF token: ${referenceNumber}`);
 
-  return ksefRequest<RevokeTokenResponse>(
+  await ksefRequest(
     "DELETE",
-    `/online/Credentials/Revoke/${referenceNumber}`,
+    `/tokens/${referenceNumber}`,
     undefined,
-    { sessionToken },
+    { sessionToken: accessToken },
   );
 }

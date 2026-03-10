@@ -2,10 +2,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 
+// KSeF API v2 base URLs (changed in 2026 — new domain pattern)
 const KSEF_URLS: Record<string, string> = {
-  test: "https://ksef-test.mf.gov.pl/api",
-  demo: "https://ksef-demo.mf.gov.pl/api",
-  prod: "https://ksef.mf.gov.pl/api",
+  test: "https://api-test.ksef.mf.gov.pl/v2",
+  demo: "https://api-demo.ksef.mf.gov.pl/v2",
+  prod: "https://api.ksef.mf.gov.pl/v2",
 };
 
 const DATA_DIR = process.env.KSEF_DATA_DIR || join(homedir(), ".ksef-mcp");

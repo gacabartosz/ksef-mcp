@@ -16,7 +16,12 @@ import {
   findConfirmedApprovalForDraft,
 } from "../domain/approval.js";
 import { auditLog, hashNip, readAuditLog } from "../domain/audit.js";
-import { sendEncryptedInvoice } from "../infra/ksef/session.js";
+import {
+  sendEncryptedInvoice,
+  openOnlineSession,
+  closeOnlineSession,
+  getActiveOnlineSession,
+} from "../infra/ksef/session.js";
 
 // ─── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -351,13 +356,26 @@ registerTool(
       );
     }
 
-    // 6. Send to KSeF
+    // 6. Open online session if not already open
+    let onlineSession = getActiveOnlineSession();
+    let sessionOpened = false;
+    if (!onlineSession) {
+      try {
+        onlineSession = await openOnlineSession(session.accessToken);
+        sessionOpened = true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return toolError(`Błąd otwierania sesji online: ${msg}`);
+      }
+    }
+
+    // 7. Send to KSeF
     try {
-      const result = await sendEncryptedInvoice(session.token, xml);
+      const result = await sendEncryptedInvoice(session.accessToken, xml, onlineSession);
 
       // Update draft status
       setDraftStatus(input.draftId, "sent", {
-        ksefReferenceNumber: result.elementReferenceNumber,
+        ksefReferenceNumber: result.referenceNumber,
         sentAt: new Date().toISOString(),
       });
 
@@ -367,20 +385,19 @@ registerTool(
         nipHash: hashNip(draft.sellerNip),
         draftId: input.draftId,
         approvalId: approval.id,
-        ksefReferenceNumber: result.elementReferenceNumber,
+        ksefReferenceNumber: result.referenceNumber,
         payloadHash: draft.xmlHash,
         status: "success",
         durationMs: Date.now() - startMs,
       });
 
-      log("info", `Invoice sent: draft=${input.draftId}, ksefRef=${result.elementReferenceNumber}`);
+      log("info", `Invoice sent: draft=${input.draftId}, ref=${result.referenceNumber}`);
 
       return toolResult({
         status: "faktura_wyslana",
         draftId: input.draftId,
-        ksefReferenceNumber: result.elementReferenceNumber,
-        processingCode: result.processingCode,
-        processingDescription: result.processingDescription,
+        invoiceReferenceNumber: result.referenceNumber,
+        sessionReferenceNumber: onlineSession.referenceNumber,
         sentAt: new Date().toISOString(),
         hint: "Sprawdź status przetwarzania: ksef_invoice_status",
       });
