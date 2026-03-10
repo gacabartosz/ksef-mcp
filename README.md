@@ -106,26 +106,43 @@ cp .env.example .env
 
 ### Srodowiska KSeF 2.0
 
-| Srodowisko | Portal | API docs |
-|------------|--------|----------|
-| **TEST** | [ksef.mf.gov.pl](https://ksef.mf.gov.pl) | [api-test.ksef.mf.gov.pl/docs/v2](https://api-test.ksef.mf.gov.pl/docs/v2) |
-| **DEMO** | [ksef.mf.gov.pl](https://ksef.mf.gov.pl) | [api-demo.ksef.mf.gov.pl/docs/v2](https://api-demo.ksef.mf.gov.pl/docs/v2) |
-| **PROD** | [ksef.mf.gov.pl](https://ksef.mf.gov.pl) | [api.ksef.mf.gov.pl/docs/v2](https://api.ksef.mf.gov.pl/docs/v2) |
+| Srodowisko | Aplikacja Podatnika | API | API docs |
+|------------|-------------------|-----|----------|
+| **PROD** | [ap.ksef.mf.gov.pl](https://ap.ksef.mf.gov.pl) | `https://api.ksef.mf.gov.pl/v2` | [docs](https://api.ksef.mf.gov.pl/docs/v2) |
+| **TEST** | [ap-test.ksef.mf.gov.pl](https://ap-test.ksef.mf.gov.pl) | `https://api-test.ksef.mf.gov.pl/v2` | [docs](https://api-test.ksef.mf.gov.pl/docs/v2) |
+| **DEMO** | [ap-demo.ksef.mf.gov.pl](https://ap-demo.ksef.mf.gov.pl) | `https://api-demo.ksef.mf.gov.pl/v2` | [docs](https://api-demo.ksef.mf.gov.pl/docs/v2) |
+
+Portal informacyjny: [ksef.podatki.gov.pl](https://ksef.podatki.gov.pl)
 
 ### Jak uzyskac token KSeF
 
-Tokeny KSeF generujesz przez API po uwierzytelnieniu podpisem elektronicznym (XAdES).
-Pelna dokumentacja: [Zarzadzanie tokenami KSeF](https://github.com/CIRFMF/ksef-docs/blob/main/tokeny-ksef.md)
+Token KSeF mozna wygenerowac w **Aplikacji Podatnika** lub przez API.
 
-1. **Uwierzytelnij sie** podpisem elektronicznym (XAdES) — certyfikat kwalifikowany lub pieczec kwalifikowana
-   - Dokumentacja uwierzytelniania: [uwierzytelnianie.md](https://github.com/CIRFMF/ksef-docs/blob/main/uwierzytelnianie.md)
-2. **Wygeneruj token** przez API:
-   - Wywolaj `POST /tokens` z uprawnieniami i opisem
-   - Dostepne uprawnienia: `InvoiceRead`, `InvoiceWrite`, `CredentialsRead`, `CredentialsManage`, `SubunitManage`, `EnforcementOperations`, `Introspection`
-3. **Zapisz token bezpiecznie** — token jest tajny, wyswietlany tylko raz
-4. **Wklej token** do zmiennej `KSEF_TOKEN` w konfiguracji MCP
+#### Sposob 1: Przez Aplikacje Podatnika (najlatwiejszy)
+
+1. **Wejdz na Aplikacje Podatnika**:
+   - Produkcja: [ap.ksef.mf.gov.pl](https://ap.ksef.mf.gov.pl)
+   - Test: [ap-test.ksef.mf.gov.pl](https://ap-test.ksef.mf.gov.pl)
+   - Demo: [ap-demo.ksef.mf.gov.pl](https://ap-demo.ksef.mf.gov.pl)
+2. **Zaloguj sie** Profilem Zaufanym, podpisem kwalifikowanym lub e-dowodem
+3. **Przejdz do sekcji Tokeny** i wygeneruj nowy token:
+   - Wybierz uprawnienia: odczyt faktur, wystawianie faktur, itp.
+   - Skopiuj token (wyswietlany tylko raz!)
+4. **Wklej token** do konfiguracji MCP (`KSEF_TOKEN`)
+
+> Generowanie tokenow w Aplikacji Podatnika dostepne do 31 grudnia 2026 r.
+
+#### Sposob 2: Przez API (po uwierzytelnieniu XAdES)
+
+1. Uwierzytelnij sie podpisem elektronicznym: [uwierzytelnianie.md](https://github.com/CIRFMF/ksef-docs/blob/main/uwierzytelnianie.md)
+2. Wywolaj `POST /tokens` z uprawnieniami i opisem
+3. Dostepne uprawnienia: `InvoiceRead`, `InvoiceWrite`, `CredentialsRead`, `CredentialsManage`, `SubunitManage`, `EnforcementOperations`, `Introspection`
+
+Dokumentacja tokenow: [tokeny-ksef.md](https://github.com/CIRFMF/ksef-docs/blob/main/tokeny-ksef.md)
 
 ### Przeplyw uwierzytelniania (API v2)
+
+Gdy masz token, ksef-mcp automatycznie wykonuje caly flow:
 
 ```
 1. POST /auth/challenge              → { challenge, timestamp, timestampMs }
@@ -142,7 +159,7 @@ Szczegoly: [Proces uwierzytelniania KSeF 2.0](https://github.com/CIRFMF/ksef-doc
 ### Przyklad konfiguracji
 
 ```bash
-KSEF_ENV=test
+KSEF_ENV=prod
 KSEF_NIP=5993112591
 KSEF_TOKEN=twoj-wygenerowany-token-ksef
 ```
@@ -150,9 +167,11 @@ KSEF_TOKEN=twoj-wygenerowany-token-ksef
 ### Wazne uwagi
 
 - **Wymagany polski IP** — srodowiska KSeF sa chronione przez WAF i wymagaja polskiego adresu IP
-- **Dane testowe** — w srodowisku testowym mozesz swobodnie wysylac i pobierac faktury
-- **Certyfikaty testowe** — do podpisywania w srodowisku testowym mozna uzyc certyfikatow testowych
+- **Produkcja vs Test** — na produkcji faktury maja moc prawna! Do testow uzywaj srodowiska TEST
+- **Test** — mozna uzyc fikcyjnych danych, dane sa okresowo usuwane
+- **Demo** — logowanie prawdziwymi danymi (NIP z rejestru), ale faktury bez skutkow prawnych
 - **Klucze publiczne MF** — pobierane automatycznie z `GET /security/public-key-certificates`
+- **Mozesz przelaczac srodowisko** w runtime toolem `ksef_env_set` (bez restartu MCP)
 
 ### Praca bez dostepu do KSeF (tryb offline)
 
@@ -395,15 +414,15 @@ Dodatkowo:
 
 ---
 
-## Srodowiska KSeF API v2
+## Srodowiska KSeF 2.0
 
-| Srodowisko | URL API | Dokumentacja | Zastosowanie |
-|------------|---------|-------------|-------------|
-| `test` | `https://api-test.ksef.mf.gov.pl/v2` | [docs](https://api-test.ksef.mf.gov.pl/docs/v2) | Testy integracyjne |
-| `demo` | `https://api-demo.ksef.mf.gov.pl/v2` | [docs](https://api-demo.ksef.mf.gov.pl/docs/v2) | Przedprodukcyjne |
-| `prod` | `https://api.ksef.mf.gov.pl/v2` | [docs](https://api.ksef.mf.gov.pl/docs/v2) | Produkcja |
+| Srodowisko | Aplikacja Podatnika | API | Docs | Logowanie | Dane |
+|------------|-------------------|-----|------|-----------|------|
+| `prod` | [ap.ksef.mf.gov.pl](https://ap.ksef.mf.gov.pl) | `api.ksef.mf.gov.pl/v2` | [docs](https://api.ksef.mf.gov.pl/docs/v2) | Prawdziwe dane | Moc prawna! |
+| `test` | [ap-test.ksef.mf.gov.pl](https://ap-test.ksef.mf.gov.pl) | `api-test.ksef.mf.gov.pl/v2` | [docs](https://api-test.ksef.mf.gov.pl/docs/v2) | Fikcyjne dane | Okresowo usuwane |
+| `demo` | [ap-demo.ksef.mf.gov.pl](https://ap-demo.ksef.mf.gov.pl) | `api-demo.ksef.mf.gov.pl/v2` | [docs](https://api-demo.ksef.mf.gov.pl/docs/v2) | Prawdziwy NIP | Bez skutkow prawnych |
 
-Portal: [ksef.mf.gov.pl](https://ksef.mf.gov.pl)
+Portal informacyjny: [ksef.podatki.gov.pl](https://ksef.podatki.gov.pl) | Infolinia: 22 330 03 30 (pn-pt 8:00-18:00)
 
 ---
 
