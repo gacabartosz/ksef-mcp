@@ -9,6 +9,7 @@ import {
   terminateSession,
   requireSession,
   refreshAccessToken,
+  clearSession,
 } from "../infra/ksef/auth.js";
 
 // ─── Schemas ────────────────────────────────────────────────────────────────────
@@ -225,9 +226,8 @@ registerTool(
         referenceNumber: session.referenceNumber,
       });
     } catch (err) {
-      // Even if API fails, clear local session
-      const { unlinkSync } = await import("node:fs");
-      try { unlinkSync(config.sessionFile); } catch { /* ignore */ }
+      // Even if API fails, clear both in-memory and file session
+      clearSession();
       return toolResult({
         status: "sesja_wyczyszczona_lokalnie",
         referenceNumber: session.referenceNumber,

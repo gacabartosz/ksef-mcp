@@ -119,6 +119,12 @@ function saveSession(session: SessionInfo | null): void {
   }
 }
 
+/** Clear session from memory and disk (no API call). */
+export function clearSession(): void {
+  activeSession = null;
+  try { unlinkSync(config.sessionFile); } catch { /* ignore */ }
+}
+
 export function requireSession(): SessionInfo {
   const session = getActiveSession();
   if (!session) {

@@ -6,7 +6,7 @@ import { getDraft, lockDraft, setDraftStatus } from "../domain/draft.js";
 import { buildInvoiceXml } from "../domain/xml-builder.js";
 import { validateDraft } from "../domain/validator.js";
 import { sha256hex } from "../infra/ksef/crypto.js";
-import { requireSession } from "../infra/ksef/auth.js";
+import { requireSession, getValidAccessToken } from "../infra/ksef/auth.js";
 import { config } from "../utils/config.js";
 import {
   createApproval,
@@ -356,12 +356,21 @@ registerTool(
       );
     }
 
-    // 6. Open online session if not already open
+    // 6. Get valid access token (auto-refresh if expired)
+    let accessToken: string;
+    try {
+      accessToken = await getValidAccessToken();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return toolError(`Błąd odświeżania tokena: ${msg}. Zaloguj się ponownie: ksef_auth_init.`);
+    }
+
+    // 7. Open online session if not already open
     let onlineSession = getActiveOnlineSession();
     let sessionOpened = false;
     if (!onlineSession) {
       try {
-        onlineSession = await openOnlineSession(session.accessToken);
+        onlineSession = await openOnlineSession(accessToken);
         sessionOpened = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -369,9 +378,9 @@ registerTool(
       }
     }
 
-    // 7. Send to KSeF
+    // 8. Send to KSeF
     try {
-      const result = await sendEncryptedInvoice(session.accessToken, xml, onlineSession);
+      const result = await sendEncryptedInvoice(accessToken, xml, onlineSession);
 
       // Update draft status
       setDraftStatus(input.draftId, "sent", {
