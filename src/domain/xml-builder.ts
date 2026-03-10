@@ -2,6 +2,37 @@ import { XMLBuilder } from "fast-xml-parser";
 import type { DraftInvoice, InvoiceItem } from "./draft.js";
 import { computeTotals } from "./draft.js";
 
+// ─── HTML entity decoding ────────────────────────────────────────────────────────
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function sanitizeDraftStrings(draft: DraftInvoice): DraftInvoice {
+  return {
+    ...draft,
+    sellerName: decodeHtmlEntities(draft.sellerName),
+    sellerAddress: draft.sellerAddress ? decodeHtmlEntities(draft.sellerAddress) : draft.sellerAddress,
+    buyerName: decodeHtmlEntities(draft.buyerName),
+    buyerAddress: draft.buyerAddress ? decodeHtmlEntities(draft.buyerAddress) : draft.buyerAddress,
+    invoiceNumber: decodeHtmlEntities(draft.invoiceNumber),
+    originalInvoiceNumber: draft.originalInvoiceNumber ? decodeHtmlEntities(draft.originalInvoiceNumber) : draft.originalInvoiceNumber,
+    items: draft.items.map((item) => ({
+      ...item,
+      name: decodeHtmlEntities(item.name),
+    })),
+    originalItems: draft.originalItems?.map((item) => ({
+      ...item,
+      name: decodeHtmlEntities(item.name),
+    })),
+  };
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
 const FA3_NAMESPACE = "http://crd.gov.pl/wzor/2025/06/25/13775/";
@@ -110,7 +141,7 @@ function buildAdnotacje(): Record<string, unknown> {
 // ─── XML Builder ────────────────────────────────────────────────────────────────
 
 export function buildInvoiceXml(draft: DraftInvoice): string {
-  const computed = computeTotals(draft);
+  const computed = computeTotals(sanitizeDraftStrings(draft));
   const isCorrection = !!computed.correctionReason;
 
   // Build seller/buyer addresses
