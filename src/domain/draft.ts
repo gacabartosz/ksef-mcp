@@ -51,6 +51,7 @@ export interface DraftInvoice {
   originalItems?: InvoiceItem[];   // Items before correction (StanPrzed)
   isZeroingCorrection?: boolean;   // Flag for zeroing correction
   exchangeRate?: number;           // Exchange rate for foreign currency (PLN per 1 unit) — used for P_14_xW
+  forcedVatPln?: Record<string, number>;  // Manual P_14_xW overrides by rate suffix, e.g. {"1": -3197.74} → P_14_1W=-3197.74
   // Send tracking
   ksefReferenceNumber?: string;
   xmlHash?: string;

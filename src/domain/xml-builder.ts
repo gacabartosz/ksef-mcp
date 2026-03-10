@@ -162,7 +162,10 @@ export function buildInvoiceXml(draft: DraftInvoice): string {
         const diffVat = round2((afterGroup?.totalVat ?? 0) - (beforeGroup?.totalVat ?? 0));
         faSection[`P_14_${suffix}`] = diffVat;
         // P_14_xW — VAT difference in PLN for foreign currency invoices
-        if (computed.exchangeRate) {
+        if (computed.forcedVatPln?.[suffix] !== undefined) {
+          // Manual override (e.g. KOR-to-KOR where only P_14_xW changes)
+          faSection[`P_14_${suffix}W`] = computed.forcedVatPln[suffix];
+        } else if (computed.exchangeRate) {
           faSection[`P_14_${suffix}W`] = round2(diffVat * computed.exchangeRate);
         }
       }

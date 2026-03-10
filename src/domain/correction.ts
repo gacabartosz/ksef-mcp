@@ -71,6 +71,7 @@ export interface KsefInvoiceData {
   buyerAddress?: string;
   currency: string;
   exchangeRate?: number;       // PLN per 1 unit of foreign currency (for P_14_xW)
+  forcedVatPln?: Record<string, number>;  // Manual P_14_xW overrides by rate suffix
   items: { name: string; quantity: number; unitPrice: number; vatRate: number; unit?: string }[];
 }
 
@@ -87,8 +88,9 @@ export interface KsefInvoiceData {
 export function createZeroingCorrectionFromKsef(
   data: KsefInvoiceData,
   correctionReason: string,
+  originalItemsOverride?: InvoiceItem[],
 ): DraftInvoice {
-  const originalItems: InvoiceItem[] = data.items.map((item) => ({
+  const originalItems: InvoiceItem[] = originalItemsOverride ?? data.items.map((item) => ({
     name: item.name,
     quantity: item.quantity,
     unitPrice: item.unitPrice,
@@ -123,6 +125,7 @@ export function createZeroingCorrectionFromKsef(
     correctionReason,
     isZeroingCorrection: true,
     exchangeRate: data.exchangeRate,
+    forcedVatPln: data.forcedVatPln,
   });
 
   log("info", `Zeroing correction draft created: ${correctionDraft.id} for KSeF invoice: ${data.ksefNumber}`);

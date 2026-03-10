@@ -110,6 +110,7 @@ const CorrectionZeroInput = z.object({
   buyerAddress: z.string().optional().describe("Adres nabywcy"),
   currency: z.string().optional().describe("Waluta (domyślnie PLN)"),
   exchangeRate: z.number().positive().optional().describe("Kurs waluty (PLN za 1 jednostkę) — wymagany dla faktur walutowych, generuje P_14_xW"),
+  forcedVatPln: z.record(z.string(), z.number()).optional().describe("Ręczne nadpisanie P_14_xW wg stawki, np. {\"1\": -3197.74} → P_14_1W=-3197.74. Używaj dla KOR-do-KOR."),
   correctionReason: z.string().min(3).describe("Powód korekty (min. 3 znaki)"),
   items: z.array(z.object({
     name: z.string(),
@@ -177,6 +178,10 @@ registerTool(
           type: "number",
           description: "Kurs waluty (PLN za 1 jednostkę) — wymagany dla faktur walutowych, generuje P_14_xW",
         },
+        forcedVatPln: {
+          type: "object",
+          description: "Ręczne nadpisanie P_14_xW wg stawki VAT, np. {\"1\": -3197.74} → P_14_1W=-3197.74. Dla KOR-do-KOR.",
+        },
         correctionReason: {
           type: "string",
           description: "Powód korekty (min. 3 znaki)",
@@ -229,6 +234,7 @@ registerTool(
           buyerAddress: input.buyerAddress,
           currency: input.currency || "PLN",
           exchangeRate: input.exchangeRate,
+          forcedVatPln: input.forcedVatPln,
           items: input.items,
         },
         input.correctionReason,
