@@ -262,7 +262,7 @@ export function buildInvoiceXml(draft: DraftInvoice): string {
           "@_wersjaSchemy": "1-0E",
         },
         WariantFormularza: 3,
-        DataWytworzeniaFa: (draft.lockedAt || draft.updatedAt || new Date().toISOString()).replace(/\.\d{3}Z$/, ""),
+        DataWytworzeniaFa: draft.createdAt.replace(/\.\d{3}Z$/, ""),
         SystemInfo: "ksef-mcp",
       },
       Podmiot1: {
