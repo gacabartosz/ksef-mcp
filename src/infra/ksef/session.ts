@@ -168,8 +168,8 @@ export async function sendEncryptedInvoice(
 
   const xmlBuffer = Buffer.from(invoiceXml, "utf-8");
 
-  // Encrypt with session AES key
-  const { ciphertext, iv } = encryptAes256Cbc(xmlBuffer, session.aesKey);
+  // Encrypt with session AES key and session IV
+  const { ciphertext } = encryptAes256Cbc(xmlBuffer, session.aesKey, session.iv);
 
   // Compute hashes (SHA-256 Base64, as required by v2)
   const invoiceHash = sha256base64(xmlBuffer);

@@ -83,11 +83,12 @@ export function encryptWithRsaOaep(plaintext: Buffer, publicKeyPem: string): Buf
 export function encryptAes256Cbc(
   plaintext: Buffer,
   key: Buffer,
+  iv?: Buffer,
 ): { ciphertext: Buffer; iv: Buffer } {
-  const iv = randomBytes(16);
-  const cipher = createCipheriv("aes-256-cbc", key, iv);
+  const usedIv = iv ?? randomBytes(16);
+  const cipher = createCipheriv("aes-256-cbc", key, usedIv);
   const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  return { ciphertext: encrypted, iv };
+  return { ciphertext: encrypted, iv: usedIv };
 }
 
 /**
