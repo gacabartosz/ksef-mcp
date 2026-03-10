@@ -6,9 +6,13 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D20-green)](https://nodejs.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io)
 
-**Pierwszy publiczny MCP server do Krajowego Systemu e-Faktur (KSeF).**
+**Pierwszy publiczny MCP server do Krajowego Systemu e-Faktur (KSeF) — API v2.**
 
-Uwierzytelnianie, wystawianie, walidacja i pobieranie e-faktur przez AI. Kompatybilny z **Claude Desktop**, **Claude Code** i **ChatGPT**.
+Uwierzytelnianie (JWT), wystawianie, walidacja i pobieranie e-faktur przez AI. Kompatybilny z **Claude Desktop**, **Claude Code** i **ChatGPT**.
+
+> **KSeF API v2** (2026) — nowe endpointy, JWT Bearer auth, osobne sesje online/batch.
+> Dokumentacja API: [api.ksef.mf.gov.pl/docs/v2](https://api.ksef.mf.gov.pl/docs/v2/index.html) |
+> Dokumentacja integracji: [github.com/CIRFMF/ksef-docs](https://github.com/CIRFMF/ksef-docs)
 
 ---
 
@@ -96,41 +100,59 @@ cp .env.example .env
 
 ---
 
-## Token testowy KSeF (srodowisko TE)
+## Token KSeF — jak uzyskac
 
 > **To jest najwazniejsza sekcja jesli chcesz przetestowac integracje z KSeF.**
 
-Srodowisko testowe KSeF (TE) jest dostepne pod adresem:
-**https://ksef-test.mf.gov.pl**
+### Srodowiska KSeF 2.0
 
-### Jak uzyskac token testowy
+| Srodowisko | Portal | API docs |
+|------------|--------|----------|
+| **TEST** | [ksef.mf.gov.pl](https://ksef.mf.gov.pl) | [api-test.ksef.mf.gov.pl/docs/v2](https://api-test.ksef.mf.gov.pl/docs/v2) |
+| **DEMO** | [ksef.mf.gov.pl](https://ksef.mf.gov.pl) | [api-demo.ksef.mf.gov.pl/docs/v2](https://api-demo.ksef.mf.gov.pl/docs/v2) |
+| **PROD** | [ksef.mf.gov.pl](https://ksef.mf.gov.pl) | [api.ksef.mf.gov.pl/docs/v2](https://api.ksef.mf.gov.pl/docs/v2) |
 
-1. **Wejdz na** https://ksef-test.mf.gov.pl
-2. **Uzyj dowolnego testowego NIP-u** — np. `0000000001` lub innego z puli testowej Ministerstwa Finansow
-3. **Uwierzytelnij sie** jednym z ponizszych sposobow:
-   - **Profil Zaufany (testowy)** — wersja testowa ePUAP
-   - **Certyfikat testowy** — certyfikat kwalifikowany dla srodowiska testowego
-   - **Token generowany w interfejsie** — najlatwiejsza opcja
-4. **Wygeneruj token** w interfejsie webowym KSeF:
-   - Po zalogowaniu przejdz do sekcji *Tokeny*
-   - Kliknij *Generuj token*
-   - Wybierz uprawnienia (do wysylki faktur zaznacz *Wystawianie faktur*)
-   - Skopiuj wygenerowany token
-5. **Wklej token** do zmiennej `KSEF_TOKEN` w pliku `.env` lub w konfiguracji MCP
+### Jak uzyskac token KSeF
 
-### Przyklad konfiguracji dla srodowiska testowego
+Tokeny KSeF generujesz przez API po uwierzytelnieniu podpisem elektronicznym (XAdES).
+Pelna dokumentacja: [Zarzadzanie tokenami KSeF](https://github.com/CIRFMF/ksef-docs/blob/main/tokeny-ksef.md)
+
+1. **Uwierzytelnij sie** podpisem elektronicznym (XAdES) — certyfikat kwalifikowany lub pieczec kwalifikowana
+   - Dokumentacja uwierzytelniania: [uwierzytelnianie.md](https://github.com/CIRFMF/ksef-docs/blob/main/uwierzytelnianie.md)
+2. **Wygeneruj token** przez API:
+   - Wywolaj `POST /tokens` z uprawnieniami i opisem
+   - Dostepne uprawnienia: `InvoiceRead`, `InvoiceWrite`, `CredentialsRead`, `CredentialsManage`, `SubunitManage`, `EnforcementOperations`, `Introspection`
+3. **Zapisz token bezpiecznie** — token jest tajny, wyswietlany tylko raz
+4. **Wklej token** do zmiennej `KSEF_TOKEN` w konfiguracji MCP
+
+### Przeplyw uwierzytelniania (API v2)
+
+```
+1. POST /auth/challenge              → { challenge, timestamp, timestampMs }
+2. POST /auth/ksef-token             → zaszyfruj token|timestampMs kluczem RSA-OAEP
+                                       → { authenticationToken (JWT), referenceNumber }
+3. GET  /auth/{referenceNumber}      → sprawdz status (polling)
+4. POST /auth/token/redeem           → Bearer: authToken → { accessToken, refreshToken }
+5. Uzyj: Authorization: Bearer {accessToken} do wszystkich wywolan API
+6. POST /auth/token/refresh          → Bearer: refreshToken → nowy accessToken
+```
+
+Szczegoly: [Proces uwierzytelniania KSeF 2.0](https://github.com/CIRFMF/ksef-docs/blob/main/uwierzytelnianie.md)
+
+### Przyklad konfiguracji
 
 ```bash
 KSEF_ENV=test
-KSEF_NIP=0000000001
-KSEF_TOKEN=wygenerowany-token-z-ksef-test
+KSEF_NIP=5993112591
+KSEF_TOKEN=twoj-wygenerowany-token-ksef
 ```
 
 ### Wazne uwagi
 
-- **Wymagany polski IP** — srodowisko testowe KSeF jest chronione przez Imperva WAF i wymaga polskiego adresu IP. Jesli pracujesz z zagranicy, uzyj VPN z serwerem w Polsce.
-- **Dane testowe** — w srodowisku testowym mozesz swobodnie wysylac i pobierac faktury. Dane sa regularnie czyszczone przez Ministerstwo Finansow.
-- **Certyfikaty testowe** — do podpisywania faktur w srodowisku testowym mozna uzyc certyfikatow testowych wydawanych przez centra certyfikacji.
+- **Wymagany polski IP** — srodowiska KSeF sa chronione przez WAF i wymagaja polskiego adresu IP
+- **Dane testowe** — w srodowisku testowym mozesz swobodnie wysylac i pobierac faktury
+- **Certyfikaty testowe** — do podpisywania w srodowisku testowym mozna uzyc certyfikatow testowych
+- **Klucze publiczne MF** — pobierane automatycznie z `GET /security/public-key-certificates`
 
 ### Praca bez dostepu do KSeF (tryb offline)
 
@@ -266,14 +288,15 @@ location /ksef/ {
 Pelny przeplyw od szkicu do wysylki:
 
 ```
-1. ksef_draft_create     → Utworz szkic faktury
-2. ksef_draft_validate   → Zwaliduj wg regul FA(3)
-3. ksef_draft_lock       → Zablokuj i oblicz hash XML
-4. ksef_approval_request → Zadaj zatwierdzenia
-5. ksef_approval_confirm → Potwierdz (lub auto jesli KSEF_APPROVAL_MODE=auto)
-6. ksef_send_invoice     → Zaszyfruj i wyslij do KSeF
-7. ksef_invoice_status   → Sprawdz status przetwarzania
-8. ksef_audit_log        → Przejrzyj log audytowy
+1. ksef_auth_init        → Uwierzytelnij (challenge → ksef-token → redeem → JWT)
+2. ksef_draft_create     → Utworz szkic faktury
+3. ksef_draft_validate   → Zwaliduj wg regul FA(3)
+4. ksef_draft_lock       → Zablokuj i oblicz hash XML
+5. ksef_approval_request → Zadaj zatwierdzenia
+6. ksef_approval_confirm → Potwierdz (lub auto jesli KSEF_APPROVAL_MODE=auto)
+7. ksef_send_invoice     → Auto-otwiera sesje online, szyfruje AES-256-CBC, wysyla
+8. ksef_invoice_status   → Sprawdz status przetwarzania (sessionRef + invoiceRef)
+9. ksef_audit_log        → Przejrzyj log audytowy
 ```
 
 ### Przeplyw korekty faktury
@@ -284,13 +307,13 @@ Pelny przeplyw od szkicu do wysylki:
 3. (dalej standardowy przeplyw: validate → lock → approval → send)
 ```
 
-### Przeplyw batch (wysylka zbiorcza)
+### Przeplyw batch (wysylka zbiorcza, API v2)
 
 ```
-1. ksef_batch_open        → Otworz sesje batch
-2. ksef_batch_send_part   → Wyslij zaszyfrowane czesci ZIP (1..N)
+1. ksef_batch_open        → Otworz sesje batch (podaj file hash + parts) → pre-signed URLs
+2. ksef_batch_send_part   → Upload czesci na pre-signed URLs
 3. ksef_batch_close       → Zamknij sesje batch
-4. ksef_batch_status      → Sprawdz status przetwarzania
+4. ksef_batch_status      → Sprawdz status przetwarzania (GET /sessions/{ref})
 ```
 
 ### Tryb automatycznego zatwierdzania
@@ -372,13 +395,15 @@ Dodatkowo:
 
 ---
 
-## Srodowiska KSeF
+## Srodowiska KSeF API v2
 
-| Srodowisko | URL API | Zastosowanie |
-|------------|---------|-------------|
-| `test` | `https://ksef-test.mf.gov.pl/api` | Testy integracyjne |
-| `demo` | `https://ksef-demo.mf.gov.pl/api` | Przedprodukcyjne |
-| `prod` | `https://ksef.mf.gov.pl/api` | Produkcja |
+| Srodowisko | URL API | Dokumentacja | Zastosowanie |
+|------------|---------|-------------|-------------|
+| `test` | `https://api-test.ksef.mf.gov.pl/v2` | [docs](https://api-test.ksef.mf.gov.pl/docs/v2) | Testy integracyjne |
+| `demo` | `https://api-demo.ksef.mf.gov.pl/v2` | [docs](https://api-demo.ksef.mf.gov.pl/docs/v2) | Przedprodukcyjne |
+| `prod` | `https://api.ksef.mf.gov.pl/v2` | [docs](https://api.ksef.mf.gov.pl/docs/v2) | Produkcja |
+
+Portal: [ksef.mf.gov.pl](https://ksef.mf.gov.pl)
 
 ---
 
@@ -389,6 +414,7 @@ Dodatkowo:
 - [x] Sprint 3: Dwufazowa wysylka + audit trail
 - [x] Sprint 4: Korekty + batch + zarzadzanie tokenami
 - [x] Sprint 5: Rate limiting + dokumentacja + token testowy
+- [x] Sprint 6: **Migracja na KSeF API v2** — nowe endpointy, JWT auth, sesje online/batch
 
 ---
 
@@ -415,11 +441,11 @@ src/
     correction.ts           — Faktury korygujace (klonowanie wyslanej faktury)
   infra/ksef/
     client.ts               — HTTP client (fetch + rate limit + retry + backoff)
-    auth.ts                 — Przeplyw auth (challenge → initTokenSession)
-    crypto.ts               — RSA-OAEP, AES-256-CBC, SHA-256
-    session.ts              — Sesja online (szyfrowana wysylka)
-    batch.ts                — Sesja batch (open, send parts, close, status)
-    token-client.ts         — Zarzadzanie tokenami KSeF (generate, list, get, revoke)
+    auth.ts                 — Auth v2 (challenge → ksef-token → redeem → JWT + refresh)
+    crypto.ts               — RSA-OAEP, AES-256-CBC, SHA-256, public key certs
+    session.ts              — Sesja online (open, send encrypted, close, status, UPO)
+    batch.ts                — Sesja batch (open → pre-signed URLs, upload, close, status)
+    token-client.ts         — Zarzadzanie tokenami KSeF (POST/GET/DELETE /tokens)
     rate-limiter.ts         — Token-bucket rate limiter
   utils/
     config.ts               — Zmienne srodowiskowe, URL-e, katalogi
