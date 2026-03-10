@@ -109,6 +109,7 @@ const CorrectionZeroInput = z.object({
   buyerName: z.string().describe("Nazwa nabywcy"),
   buyerAddress: z.string().optional().describe("Adres nabywcy"),
   currency: z.string().optional().describe("Waluta (domyślnie PLN)"),
+  exchangeRate: z.number().positive().optional().describe("Kurs waluty (PLN za 1 jednostkę) — wymagany dla faktur walutowych, generuje P_14_xW"),
   correctionReason: z.string().min(3).describe("Powód korekty (min. 3 znaki)"),
   items: z.array(z.object({
     name: z.string(),
@@ -172,6 +173,10 @@ registerTool(
           type: "string",
           description: "Waluta (domyślnie PLN)",
         },
+        exchangeRate: {
+          type: "number",
+          description: "Kurs waluty (PLN za 1 jednostkę) — wymagany dla faktur walutowych, generuje P_14_xW",
+        },
         correctionReason: {
           type: "string",
           description: "Powód korekty (min. 3 znaki)",
@@ -223,6 +228,7 @@ registerTool(
           buyerName: input.buyerName,
           buyerAddress: input.buyerAddress,
           currency: input.currency || "PLN",
+          exchangeRate: input.exchangeRate,
           items: input.items,
         },
         input.correctionReason,

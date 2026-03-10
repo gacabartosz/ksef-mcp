@@ -70,6 +70,7 @@ export interface KsefInvoiceData {
   buyerName: string;
   buyerAddress?: string;
   currency: string;
+  exchangeRate?: number;       // PLN per 1 unit of foreign currency (for P_14_xW)
   items: { name: string; quantity: number; unitPrice: number; vatRate: number; unit?: string }[];
 }
 
@@ -121,6 +122,7 @@ export function createZeroingCorrectionFromKsef(
     originalIssueDate: data.issueDate,
     correctionReason,
     isZeroingCorrection: true,
+    exchangeRate: data.exchangeRate,
   });
 
   log("info", `Zeroing correction draft created: ${correctionDraft.id} for KSeF invoice: ${data.ksefNumber}`);

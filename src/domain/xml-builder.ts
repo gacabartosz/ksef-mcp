@@ -74,7 +74,7 @@ function computeItemAmounts(items: InvoiceItem[]): InvoiceItem[] {
 
 // ─── Build VAT summary fields ───────────────────────────────────────────────────
 
-function buildVatSummary(vatGroups: VatGroup[]): Record<string, number> {
+function buildVatSummary(vatGroups: VatGroup[], exchangeRate?: number): Record<string, number> {
   const vatSummary: Record<string, number> = {};
   for (const group of vatGroups) {
     const suffix = getVatFieldSuffix(group.rate);
@@ -82,6 +82,10 @@ function buildVatSummary(vatGroups: VatGroup[]): Record<string, number> {
       vatSummary[`P_13_${suffix}`] = group.totalNet;
       if (group.rate > 0) {
         vatSummary[`P_14_${suffix}`] = group.totalVat;
+        // P_14_xW — VAT in PLN for foreign currency invoices
+        if (exchangeRate) {
+          vatSummary[`P_14_${suffix}W`] = round2(group.totalVat * exchangeRate);
+        }
       }
     }
   }
@@ -157,6 +161,10 @@ export function buildInvoiceXml(draft: DraftInvoice): string {
       if (rate > 0) {
         const diffVat = round2((afterGroup?.totalVat ?? 0) - (beforeGroup?.totalVat ?? 0));
         faSection[`P_14_${suffix}`] = diffVat;
+        // P_14_xW — VAT difference in PLN for foreign currency invoices
+        if (computed.exchangeRate) {
+          faSection[`P_14_${suffix}W`] = round2(diffVat * computed.exchangeRate);
+        }
       }
     }
 
@@ -169,7 +177,8 @@ export function buildInvoiceXml(draft: DraftInvoice): string {
   } else {
     // Standard invoice: use computed totals
     const vatGroups = groupByVatRate(computed.items);
-    Object.assign(faSection, buildVatSummary(vatGroups));
+    const isForeignCurrency = computed.currency && computed.currency !== "PLN";
+    Object.assign(faSection, buildVatSummary(vatGroups, isForeignCurrency ? computed.exchangeRate : undefined));
 
     // 6. P_15 (gross total)
     faSection.P_15 = computed.totalGross;

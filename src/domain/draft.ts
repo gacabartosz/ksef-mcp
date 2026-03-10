@@ -50,6 +50,7 @@ export interface DraftInvoice {
   originalIssueDate?: string;      // DataWystFaKorygowanej (YYYY-MM-DD)
   originalItems?: InvoiceItem[];   // Items before correction (StanPrzed)
   isZeroingCorrection?: boolean;   // Flag for zeroing correction
+  exchangeRate?: number;           // Exchange rate for foreign currency (PLN per 1 unit) — used for P_14_xW
   // Send tracking
   ksefReferenceNumber?: string;
   xmlHash?: string;
