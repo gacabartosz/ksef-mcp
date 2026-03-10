@@ -87,8 +87,12 @@ export function validateDraft(draft: DraftInvoice): ValidationResult {
       if (!item.name || item.name.trim() === "") {
         errors.push(`Pozycja ${pos}: brak nazwy (name).`);
       }
-      if (typeof item.quantity !== "number" || item.quantity <= 0) {
-        errors.push(`Pozycja ${pos}: ilość (quantity) musi być > 0.`);
+      if (typeof item.quantity !== "number") {
+        errors.push(`Pozycja ${pos}: ilość (quantity) musi być liczbą.`);
+      } else if (item.quantity < 0) {
+        errors.push(`Pozycja ${pos}: ilość (quantity) nie może być ujemna.`);
+      } else if (item.quantity === 0 && !draft.correctionReason) {
+        errors.push(`Pozycja ${pos}: ilość (quantity) musi być > 0 (zerowa ilość dozwolona tylko w korekcie).`);
       }
       if (typeof item.unitPrice !== "number" || item.unitPrice < 0) {
         errors.push(`Pozycja ${pos}: cena jednostkowa (unitPrice) musi być >= 0.`);

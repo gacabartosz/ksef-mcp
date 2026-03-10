@@ -46,6 +46,10 @@ export interface DraftInvoice {
   correctionOf?: string;         // original draft ID
   correctionReason?: string;
   originalKsefRef?: string;      // original KSeF reference number
+  originalInvoiceNumber?: string;  // NrFaKorygowanej
+  originalIssueDate?: string;      // DataWystFaKorygowanej (YYYY-MM-DD)
+  originalItems?: InvoiceItem[];   // Items before correction (StanPrzed)
+  isZeroingCorrection?: boolean;   // Flag for zeroing correction
   // Send tracking
   ksefReferenceNumber?: string;
   xmlHash?: string;

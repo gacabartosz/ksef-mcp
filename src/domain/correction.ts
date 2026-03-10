@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { getDraft, createDraft, type DraftInvoice } from "./draft.js";
+import { getDraft, createDraft, type DraftInvoice, type InvoiceItem } from "./draft.js";
 import { log } from "../utils/logger.js";
 
 // ─── Correction Support ─────────────────────────────────────────────────────
@@ -54,5 +53,76 @@ export function cloneAsCorrection(
   });
 
   log("info", `Correction draft created: ${correctionDraft.id} for original: ${originalDraftId}`);
+  return correctionDraft;
+}
+
+// ─── Zeroing Correction from KSeF Data ──────────────────────────────────────
+
+export interface KsefInvoiceData {
+  ksefNumber: string;          // KSeF reference number
+  invoiceNumber: string;       // Original invoice number
+  issueDate: string;           // Original issue date (YYYY-MM-DD)
+  sellDate?: string;           // Original sell date
+  sellerNip: string;
+  sellerName: string;
+  sellerAddress?: string;
+  buyerNip: string;
+  buyerName: string;
+  buyerAddress?: string;
+  currency: string;
+  items: { name: string; quantity: number; unitPrice: number; vatRate: number; unit?: string }[];
+}
+
+/**
+ * Create a zeroing correction draft from KSeF invoice data.
+ * Does NOT require a local draft of the original invoice.
+ *
+ * Creates a new draft with:
+ * - items with quantity=0 (zeroed)
+ * - originalItems with original quantities (for StanPrzed in XML)
+ * - originalKsefRef, originalInvoiceNumber, originalIssueDate
+ * - isZeroingCorrection = true
+ */
+export function createZeroingCorrectionFromKsef(
+  data: KsefInvoiceData,
+  correctionReason: string,
+): DraftInvoice {
+  const originalItems: InvoiceItem[] = data.items.map((item) => ({
+    name: item.name,
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    vatRate: item.vatRate,
+    unit: item.unit,
+  }));
+
+  const zeroedItems: InvoiceItem[] = data.items.map((item) => ({
+    name: item.name,
+    quantity: 0,
+    unitPrice: item.unitPrice,
+    vatRate: item.vatRate,
+    unit: item.unit,
+  }));
+
+  const correctionDraft = createDraft({
+    sellerNip: data.sellerNip,
+    sellerName: data.sellerName,
+    sellerAddress: data.sellerAddress,
+    buyerNip: data.buyerNip,
+    buyerName: data.buyerName,
+    buyerAddress: data.buyerAddress,
+    invoiceNumber: `KOR 1 ${data.invoiceNumber}`,
+    issueDate: new Date().toISOString().slice(0, 10),
+    sellDate: data.sellDate,
+    currency: data.currency || "PLN",
+    items: zeroedItems,
+    originalItems,
+    originalKsefRef: data.ksefNumber,
+    originalInvoiceNumber: data.invoiceNumber,
+    originalIssueDate: data.issueDate,
+    correctionReason,
+    isZeroingCorrection: true,
+  });
+
+  log("info", `Zeroing correction draft created: ${correctionDraft.id} for KSeF invoice: ${data.ksefNumber}`);
   return correctionDraft;
 }

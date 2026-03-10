@@ -1,10 +1,10 @@
 import { XMLBuilder } from "fast-xml-parser";
-import type { DraftInvoice } from "./draft.js";
+import type { DraftInvoice, InvoiceItem } from "./draft.js";
 import { computeTotals } from "./draft.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
-const FA3_NAMESPACE = "http://crd.gov.pl/wzor/2023/06/29/12648/";
+const FA3_NAMESPACE = "http://crd.gov.pl/wzor/2025/06/25/13775/";
 
 // ─── VAT rate grouping ──────────────────────────────────────────────────────────
 
@@ -14,10 +14,10 @@ interface VatGroup {
   totalVat: number;
 }
 
-function groupByVatRate(draft: DraftInvoice): VatGroup[] {
+function groupByVatRate(items: InvoiceItem[]): VatGroup[] {
   const groups = new Map<number, VatGroup>();
 
-  for (const item of draft.items) {
+  for (const item of items) {
     const rate = item.vatRate;
     const existing = groups.get(rate) || { rate, totalNet: 0, totalVat: 0 };
     existing.totalNet = round2(existing.totalNet + (item.netAmount ?? 0));
@@ -59,33 +59,22 @@ function parseAddress(address?: string): Record<string, string> {
   return { AdresL1: address };
 }
 
-// ─── XML Builder ────────────────────────────────────────────────────────────────
+// ─── Compute items with amounts ─────────────────────────────────────────────────
 
-export function buildInvoiceXml(draft: DraftInvoice): string {
-  const computed = computeTotals(draft);
-  const vatGroups = groupByVatRate(computed);
-
-  // Build line items (FaWiersz)
-  const faWiersz = computed.items.map((item, idx) => {
-    const row: Record<string, unknown> = {
-      NrWierszaFa: idx + 1,
-      P_7: item.name,
-      P_8A: item.unit || "szt.",
-      P_8B: item.quantity,
-      P_9A: item.unitPrice,
-      P_11: item.netAmount,
-    };
-
-    if (item.vatRate >= 0) {
-      row.P_12 = item.vatRate;
-    } else {
-      row.P_12 = "zw";
-    }
-
-    return row;
+function computeItemAmounts(items: InvoiceItem[]): InvoiceItem[] {
+  return items.map((item) => {
+    const netAmount = round2(item.quantity * item.unitPrice);
+    const vatAmount = item.vatRate >= 0
+      ? round2(netAmount * item.vatRate / 100)
+      : 0;
+    const grossAmount = round2(netAmount + vatAmount);
+    return { ...item, netAmount, vatAmount, grossAmount };
   });
+}
 
-  // Build VAT summary fields (P_13_x, P_14_x)
+// ─── Build VAT summary fields ───────────────────────────────────────────────────
+
+function buildVatSummary(vatGroups: VatGroup[]): Record<string, number> {
   const vatSummary: Record<string, number> = {};
   for (const group of vatGroups) {
     const suffix = getVatFieldSuffix(group.rate);
@@ -96,30 +85,170 @@ export function buildInvoiceXml(draft: DraftInvoice): string {
       }
     }
   }
+  return vatSummary;
+}
 
-  // Build FA section
-  const faSection: Record<string, unknown> = {
-    KodWaluty: computed.currency || "PLN",
-    P_1: computed.issueDate,
-    P_2: computed.invoiceNumber,
+// ─── Adnotacje section (standard for all invoices) ──────────────────────────────
+
+function buildAdnotacje(): Record<string, unknown> {
+  return {
+    P_16: 2,
+    P_17: 2,
+    P_18: 2,
+    P_18A: 2,
+    Zwolnienie: { P_19N: 1 },
+    NoweSrodkiTransportu: { P_22N: 1 },
+    P_23: 2,
+    PMarzy: { P_PMarzyN: 1 },
   };
+}
 
+// ─── XML Builder ────────────────────────────────────────────────────────────────
+
+export function buildInvoiceXml(draft: DraftInvoice): string {
+  const computed = computeTotals(draft);
+  const isCorrection = !!computed.correctionReason;
+
+  // Build seller/buyer addresses
+  const sellerAddress = parseAddress(computed.sellerAddress);
+  const buyerAddress = parseAddress(computed.buyerAddress);
+
+  // Build FA section with correct element order
+  const faSection: Record<string, unknown> = {};
+
+  // 1. KodWaluty
+  faSection.KodWaluty = computed.currency || "PLN";
+
+  // 2. P_1 (issue date)
+  faSection.P_1 = computed.issueDate;
+
+  // 3. P_2 (invoice number)
+  faSection.P_2 = computed.invoiceNumber;
+
+  // 4. P_6 (sell date)
   if (computed.sellDate) {
     faSection.P_6 = computed.sellDate;
   }
 
-  // Add line items
-  faSection.FaWiersz = faWiersz;
+  // 5. P_13_x, P_14_x (VAT summary per rate)
+  if (isCorrection && computed.originalItems) {
+    // Correction: compute difference (after - before)
+    const beforeItems = computeItemAmounts(computed.originalItems);
+    const afterItems = computed.items; // already computed by computeTotals
 
-  // Add VAT summary fields
-  Object.assign(faSection, vatSummary);
+    const beforeGroups = groupByVatRate(beforeItems);
+    const afterGroups = groupByVatRate(afterItems);
 
-  // Add gross total
-  faSection.P_15 = computed.totalGross;
+    // Collect all rates
+    const allRates = new Set<number>();
+    beforeGroups.forEach((g) => allRates.add(g.rate));
+    afterGroups.forEach((g) => allRates.add(g.rate));
 
-  // Build seller address
-  const sellerAddress = parseAddress(computed.sellerAddress);
-  const buyerAddress = parseAddress(computed.buyerAddress);
+    for (const rate of allRates) {
+      const suffix = getVatFieldSuffix(rate);
+      if (!suffix) continue;
+
+      const beforeGroup = beforeGroups.find((g) => g.rate === rate);
+      const afterGroup = afterGroups.find((g) => g.rate === rate);
+
+      const diffNet = round2((afterGroup?.totalNet ?? 0) - (beforeGroup?.totalNet ?? 0));
+      faSection[`P_13_${suffix}`] = diffNet;
+
+      if (rate > 0) {
+        const diffVat = round2((afterGroup?.totalVat ?? 0) - (beforeGroup?.totalVat ?? 0));
+        faSection[`P_14_${suffix}`] = diffVat;
+      }
+    }
+
+    // P_15 (gross total as difference)
+    const beforeGross = round2(
+      beforeItems.reduce((s, i) => s + (i.grossAmount ?? 0), 0),
+    );
+    const afterGross = computed.totalGross ?? 0;
+    faSection.P_15 = round2(afterGross - beforeGross);
+  } else {
+    // Standard invoice: use computed totals
+    const vatGroups = groupByVatRate(computed.items);
+    Object.assign(faSection, buildVatSummary(vatGroups));
+
+    // 6. P_15 (gross total)
+    faSection.P_15 = computed.totalGross;
+  }
+
+  // 7. Adnotacje
+  faSection.Adnotacje = buildAdnotacje();
+
+  // 8. RodzajFaktury
+  faSection.RodzajFaktury = isCorrection ? "KOR" : "VAT";
+
+  // 9-11. Correction-specific fields
+  if (isCorrection) {
+    faSection.PrzyczynaKorekty = computed.correctionReason;
+    faSection.TypKorekty = 1; // value correction
+    faSection.DaneFaKorygowanej = {
+      DataWystFaKorygowanej: computed.originalIssueDate,
+      NrFaKorygowanej: computed.originalInvoiceNumber,
+      NrKSeF: 1, // flag: corrected invoice has KSeF number
+      NrKSeFFaKorygowanej: computed.originalKsefRef,
+    };
+  }
+
+  // 12. FaWiersz entries
+  if (isCorrection && computed.originalItems) {
+    // Correction: emit before/after pairs
+    const beforeItems = computeItemAmounts(computed.originalItems);
+    const faWiersz: Record<string, unknown>[] = [];
+
+    for (let i = 0; i < beforeItems.length; i++) {
+      const origItem = beforeItems[i];
+      const lineNum = i + 1;
+
+      // Before line (StanPrzed = 1)
+      faWiersz.push({
+        NrWierszaFa: lineNum,
+        P_7: origItem.name,
+        P_8A: origItem.unit || "szt.",
+        P_8B: origItem.quantity,
+        P_9A: origItem.unitPrice,
+        P_11: origItem.netAmount,
+        P_12: origItem.vatRate >= 0 ? origItem.vatRate : "zw",
+        StanPrzed: 1,
+      });
+
+      // After line (zeroing: qty=0, net=0)
+      faWiersz.push({
+        NrWierszaFa: lineNum,
+        P_7: origItem.name,
+        P_8A: origItem.unit || "szt.",
+        P_8B: 0,
+        P_9A: origItem.unitPrice,
+        P_11: 0,
+        P_12: origItem.vatRate >= 0 ? origItem.vatRate : "zw",
+      });
+    }
+
+    faSection.FaWiersz = faWiersz;
+  } else {
+    // Standard invoice line items
+    faSection.FaWiersz = computed.items.map((item, idx) => {
+      const row: Record<string, unknown> = {
+        NrWierszaFa: idx + 1,
+        P_7: item.name,
+        P_8A: item.unit || "szt.",
+        P_8B: item.quantity,
+        P_9A: item.unitPrice,
+        P_11: item.netAmount,
+      };
+
+      if (item.vatRate >= 0) {
+        row.P_12 = item.vatRate;
+      } else {
+        row.P_12 = "zw";
+      }
+
+      return row;
+    });
+  }
 
   // Build full document structure
   const invoiceObj = {
@@ -130,7 +259,7 @@ export function buildInvoiceXml(draft: DraftInvoice): string {
         KodFormularza: {
           "#text": "FA",
           "@_kodSystemowy": "FA (3)",
-          "@_wersjaSchemy": "1-1E",
+          "@_wersjaSchemy": "1-0E",
         },
         WariantFormularza: 3,
         DataWytworzeniaFa: new Date().toISOString().replace(/\.\d{3}Z$/, ""),
